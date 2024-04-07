@@ -3,7 +3,7 @@ The dataset, code, and software for the paper 'Intelligent Column Chromatography
 #Please cite
 W. Wu, H. Xu, D. Zhang, F. Mo, Intelligent Column Chromatography Prediction Model Based on Machine Learning. 
 
-#Entire programm can also be downloaded from google drive since some files are to big: https://drive.google.com/file/d/1kzM2_pG-Ob_hNQ7ga2n6Ds2FXDeAppWx/view?usp=share_link
+#Entire programm can also be downloaded from google drive since some files are to big: 
 
 #Enviroment: Python==3.9
 
