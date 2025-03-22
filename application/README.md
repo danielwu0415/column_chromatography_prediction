@@ -92,21 +92,6 @@ def calculate_separation_probability_3compounds(...):
     # Calculate multi-component separation probabilities
 ```
 
-## Data Interface
-
-Input Data Requirements (Excel format):
-| Column | Description | Example |
-|--------|-------------|---------|
-| smiles | Compound SMILES | CCO |
-| t1/t2 | Retention times | 1.25 |
-| PE/EA | Eluent ratio | 8/2 |
-| Flow rate | Mobile phase speed | 20 |
-
-Output Results:
-- CSV prediction files
-- PNG format prediction plots
-- Model performance metrics logs
-
 ## Dependencies
 - RDKit >= 2022.03
 - PyTorch Geometric
