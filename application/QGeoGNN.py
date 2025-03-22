@@ -24,7 +24,8 @@ from torch.utils.tensorboard import SummaryWriter
 import gradio as gr
 from utils import *
 import pubchempy as pcp
-#v1013
+import matplotlib.pyplot as plt
+
 DAY_LIGHT_FG_SMARTS_LIST = [
         # C
         "[CX4]",
@@ -146,7 +147,6 @@ $([OX2][#6])])[$([OX2H]),$([OX1-]),$([OX2][#6]),$([OX2]P)])]",
         "[#16X2H0][!#16].[#16X2H0][!#16]",
         "[$([#16X3](=[OX1])[OX2H0]),$([#16X3+]([OX1-])[OX2H0])]",
         "[$([#16X3](=[OX1])[OX2H,OX1H0-]),$([#16X3+]([OX1-])[OX2H,OX1H0-])]",
-        "[$([#16X4](=[OX1])=[OX1]),$([#16X4+2]([OX1-])[OX1-])]",
         "[$([#16X4](=[OX1])(=[OX1])([#6])[#6]),$([#16X4+2]([OX1-])([OX1-])([#6])[#6])]",
         "[$([#16X4](=[OX1])(=[OX1])([#6])[OX2H,OX1H0-]),$([#16X4+2]([OX1-])([OX1-])([#6])[OX2H,OX1H0-])]",
         "[$([#16X4](=[OX1])(=[OX1])([#6])[OX2H0]),$([#16X4+2]([OX1-])([OX1-])([#6])[OX2H0])]",
@@ -202,6 +202,8 @@ def convert_eluent(eluent):
     ratio=[]
     PE=int(eluent.split('/')[0])
     EA=int(eluent.split('/')[1])
+    # DCM=int(eluent.split('/')[0])
+    # MeOH=int(eluent.split('/')[1])
     ratio.append(get_eluent_descriptor(np.array([PE,EA,0,0,0])/(PE+EA)))
     return np.vstack(ratio)
 def convert_CAS_to_smile(cas):
@@ -912,7 +914,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 warnings.filterwarnings('ignore')
 
 #============Parameter setting===============
-MODEL = 'Test'  #['Train','Test','Test_other_method','Test_enantiomer','Test_excel']
+MODEL = 'Train'  #['Train','Test','Test_other_method','Test_enantiomer','Test_excel']
 test_mode='fixed' #fixed or random or enantiomer(extract enantimoers)
 split_mode='data'#'compound'
 Use_geometry_enhanced=True   #default:True
@@ -941,7 +943,7 @@ full_bond_feature_dims = get_bond_feature_dims(bond_id_names)
 
 
 if Use_column_info==True:
-    bond_float_names.extend(['diameter','column_length','density'])
+    bond_float_names.extend(['column_dia','column_len','column_den'])
 
 
 calc = Calculator(descriptors, ignore_3D=False)
@@ -1022,9 +1024,9 @@ class BondFloatRBF(torch.nn.Module):
                 'e': (nn.Parameter(torch.arange(0, 1, 0.05)), nn.Parameter(torch.Tensor([1.0]))),
                 'V_e': (nn.Parameter(torch.arange(0, 1, 0.05)), nn.Parameter(torch.Tensor([1.0]))),
                 'm': (nn.Parameter(torch.arange(0, 1, 0.05)), nn.Parameter(torch.Tensor([1.0]))),
-                'diameter': (nn.Parameter(torch.arange(0, 4, 0.2)), nn.Parameter(torch.Tensor([1.0]))),
-                'column_length': (nn.Parameter(torch.arange(0, 30., 1)), nn.Parameter(torch.Tensor([1.0]))),
-                'density': (nn.Parameter(torch.arange(0, 1, 0.05)), nn.Parameter(torch.Tensor([1.0]))),
+                'column_dia': (nn.Parameter(torch.arange(0, 4, 0.2)), nn.Parameter(torch.Tensor([1.0]))),
+                'column_len': (nn.Parameter(torch.arange(0, 30., 1)), nn.Parameter(torch.Tensor([1.0]))),
+                'column_den': (nn.Parameter(torch.arange(0, 1, 0.05)), nn.Parameter(torch.Tensor([1.0]))),
             }
         else:
             self.rbf_params = rbf_params
@@ -1082,7 +1084,7 @@ class BondAngleFloatRBF(torch.nn.Module):
 
     def forward(self, bond_angle_float_features):
         """
-        Args:
+        Args
             bond_angle_float_features(dict of tensor): bond angle float features.
         """
         out_embed = 0
@@ -1129,7 +1131,7 @@ class GINNodeEmbedding(torch.nn.Module):
 
     def __init__(self, num_layers, emb_dim, drop_ratio=0.5, JK="last", residual=False):
         """GIN Node Embedding Module
-        采用多层GINConv实现图上结点的嵌入。
+        Implement node embeddings on the graph using multi-layer GINConv
         """
 
         super(GINNodeEmbedding, self).__init__()
@@ -1168,7 +1170,7 @@ class GINNodeEmbedding(torch.nn.Module):
         x, edge_index, edge_attr = batched_atom_bond.x, batched_atom_bond.edge_index, batched_atom_bond.edge_attr
         edge_index_ba,edge_attr_ba= batched_bond_angle.edge_index, batched_bond_angle.edge_attr
         # computing input node embedding
-        h_list = [self.atom_encoder(x)]  # 先将类别型原子属性转化为原子嵌入
+        h_list = [self.atom_encoder(x)]  # First convert categorical atom attributes into atom embeddings
 
         if Use_geometry_enhanced==True:
             h_list_ba=[self.bond_float_encoder(edge_attr[:,len(bond_id_names):edge_attr.shape[1]+1].to(torch.float32))+self.bond_encoder(edge_attr[:,0:len(bond_id_names)].to(torch.int64))]
@@ -1238,16 +1240,16 @@ class GINGraphPooling(nn.Module):
                  descriptor_dim=1781):
         """GIN Graph Pooling Module
 
-        此模块首先采用GINNodeEmbedding模块对图上每一个节点做嵌入，然后对节点嵌入做池化得到图的嵌入，最后用一层线性变换得到图的最终的表示（graph representation）。
+        This module first uses the GINNodeEmbedding module to embed each node in the graph, then pools the node embeddings to obtain the graph embedding, and finally uses a linear transformation to get the final graph representation.
 
         Args:
-            num_tasks (int, optional): number of labels to be predicted. Defaults to 1 (控制了图表示的维度，dimension of graph representation).
+            num_tasks (int, optional): number of labels to be predicted. Defaults to 1 (controls the dimension of graph representation).
             num_layers (int, optional): number of GINConv layers. Defaults to 5.
             emb_dim (int, optional): dimension of node embedding. Defaults to 300.
-            residual (bool, optional): adding residual connection or not. Defaults to False.
+            residual (bool, optional): whether to add residual connection. Defaults to False.
             drop_ratio (float, optional): dropout rate. Defaults to 0.
-            JK (str, optional): 可选的值为"last"和"sum"。选"last"，只取最后一层的结点的嵌入，选"sum"对各层的结点的嵌入求和。Defaults to "last".
-            graph_pooling (str, optional): pooling method of node embedding. 可选的值为"sum"，"mean"，"max"，"attention"和"set2set"。 Defaults to "sum".
+            JK (str, optional): optional values are "last" and "sum". Choose "last" to take only the node embeddings from the last layer, or "sum" to sum the node embeddings from all layers. Defaults to "last".
+            graph_pooling (str, optional): pooling method of node embedding. Optional values are "sum", "mean", "max", "attention", and "set2set". Defaults to "sum".
 
         Out:
             graph representation
@@ -1327,7 +1329,7 @@ def load_3D_mol():
     dir = 'mol_save/'
     for root, dirs, files in os.walk(dir):
         file_names = files
-    file_names.sort(key=lambda x: int(x[x.find('_') + 5:x.find(".")]))  # 按照前面的数字字符排序
+    file_names.sort(key=lambda x: int(x[x.find('_') + 5:x.find(".")]))  # Sort according to the preceding numeric characters
     mol_save = []
     for file_name in file_names:
         mol_save.append(Chem.MolFromMolFile(dir + file_name))
@@ -1384,7 +1386,6 @@ def calc_dragon_type_desc(mol):
            rdMolDescriptors.CalcRDF(mol) + rdMolDescriptors.CalcWHIM(mol) + \
            [compound_MolWt, compound_TPSA, compound_nRotB, compound_HBD, compound_HBA, compound_LogP]
 
-
 def save_3D_mol(all_smile,mol_save_dir):
     index=0
     bad_conformer=[]
@@ -1437,7 +1438,6 @@ def save_dataset(charity_smile,mol_save_dir,name,bad_conformer):
     np.save(f"dataset_save/dataset_{name}.npy",dataset,allow_pickle=True)
     np.save(f'dataset_save/dataset_morder_{name}.npy',dataset_mord)
     np.save(f'dataset_save/dataset_attribute_{name}.npy',dataset_attribute)
-
 
 def eval(model, device, loader_atom_bond,loader_bond_angle):
     model.eval()
@@ -1534,12 +1534,78 @@ def cal_prob(prediction):
         all=max(a[2],b[2])-min(a[0],b[0])
         return 1-length/(all)
 
-def Construct_dataset(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
+def Construct_dataset(dataset, data_index, T1_s, T2_s, speed, eluent, e, m, V_e):
     graph_atom_bond = []
     graph_bond_angle = []
     big_index = []
-    all_descriptor = np.load('dataset_save/dataset_morder_1124.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
-    all_attribute= np.load('dataset_save/dataset_attribute_1124.npy')
+    all_descriptor = np.load('dataset_save/dataset_morder_4g.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
+    all_attribute = np.load('dataset_save/dataset_attribute_4g.npy')
+    all_descriptor = np.hstack((all_attribute,all_descriptor))
+    np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
+    np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
+    np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
+    np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
+    all_descriptor = (all_descriptor - np.min(all_descriptor, axis=0)) / (np.max(all_descriptor, axis=0) - np.min(all_descriptor, axis=0) + 1e-8)
+    eluent = (eluent - np.min(eluent, axis=0)) / (np.max(eluent, axis=0) - np.min(eluent, axis=0) + 1e-8)
+    all_descriptor= torch.from_numpy(np.array(all_descriptor)).to(torch.int64)
+    for i in range(len(dataset)):
+        data = dataset[i]
+        atom_feature = []
+        bond_feature = []
+        for name in atom_id_names:
+            atom_feature.append(data[name])
+        for name in bond_id_names:
+            bond_feature.append(data[name])
+        atom_feature = torch.from_numpy(np.array(atom_feature).T).to(torch.int64)
+        bond_feature = torch.from_numpy(np.array(bond_feature).T).to(torch.int64)
+        bond_float_feature = torch.from_numpy(data['bond_length'].astype(np.float32))
+        bond_angle_feature = torch.from_numpy(data['bond_angle'].astype(np.float32))
+        y = torch.Tensor([T1_s[i]*speed[i],T2_s[i]*speed[i]]).reshape(1,2)
+        edge_index = torch.from_numpy(data['edges'].T).to(torch.int64)
+        bond_index = torch.from_numpy(data['BondAngleGraph_edges'].T).to(torch.int64)
+        data_index_int=torch.from_numpy(np.array(data_index[i])).to(torch.int64)
+        if y[0, 0] > 60:
+            continue
+        if y[0, 1] > 120:
+            continue
+        prop = torch.ones([bond_feature.shape[0], eluent.shape[1]]) * eluent[i]
+        e_x = torch.ones([bond_feature.shape[0]]) * e[i]
+        m_x = torch.ones([bond_feature.shape[0]]) * m[i]
+        V_e_x = torch.ones([bond_feature.shape[0]]) * V_e[i]
+        
+
+        bond_angle_descriptor = torch.ones([bond_angle_feature.shape[0],all_descriptor.shape[1]])*all_descriptor[i]
+        if Use_geometry_enhanced == True:
+            bond_feature = torch.cat([bond_feature, bond_float_feature.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, prop], dim=1)
+            bond_feature = torch.cat([bond_feature, e_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, m_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, V_e_x.reshape(-1, 1)], dim=1)
+            
+        if Use_column_info==True:
+            diameter=torch.ones([bond_feature.shape[0]]) * column_dia[i]
+            column_length=torch.ones([bond_feature.shape[0]]) * column_len[i]
+            density=torch.ones([bond_feature.shape[0]]) * column_den[i]
+            bond_feature = torch.cat([bond_feature, diameter.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, column_length.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, density.reshape(-1, 1)], dim=1)
+
+        bond_angle_feature = bond_angle_feature.reshape(-1,1)
+        bond_angle_feature = torch.cat([bond_angle_feature.reshape(-1, 1), bond_angle_descriptor], dim=1)
+
+
+        data_atom_bond = Data(atom_feature, edge_index, bond_feature, y,data_index=data_index_int)
+        data_bond_angle= Data(edge_index=bond_index, edge_attr=bond_angle_feature)
+        graph_atom_bond.append(data_atom_bond)
+        graph_bond_angle.append(data_bond_angle)
+    return graph_atom_bond,graph_bond_angle
+
+def Construct_dataset_8g(dataset,data_index, T1_s, T2_s, speed, eluent,e,m,V_e):
+    graph_atom_bond = []
+    graph_bond_angle = []
+    big_index = []
+    all_descriptor = np.load('dataset_save/dataset_morder_8g.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
+    all_attribute= np.load('dataset_save/dataset_attribute_8g.npy')
     all_descriptor=np.hstack((all_attribute,all_descriptor))
     np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
     np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
@@ -1568,76 +1634,11 @@ def Construct_dataset(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
             continue
         if y[0,1]> 120:
             continue
-        prop = torch.ones([bond_feature.shape[0], eluent.shape[1]])*eluent[i]
-        e_x = torch.ones([bond_feature.shape[0]]) * e[i]
-        m_x = torch.ones([bond_feature.shape[0]]) * m[i]
-        V_e_x = torch.ones([bond_feature.shape[0]]) * V_e[i]
-
-
-        bond_angle_descriptor=torch.ones([bond_angle_feature.shape[0],all_descriptor.shape[1]])*all_descriptor[i]
-        if Use_geometry_enhanced == True:
-            bond_feature=torch.cat([bond_feature,bond_float_feature.reshape(-1,1)],dim=1)
-        bond_feature = torch.cat([bond_feature, prop], dim=1)
-        bond_feature = torch.cat([bond_feature, e_x.reshape(-1, 1)], dim=1)
-        bond_feature = torch.cat([bond_feature, m_x.reshape(-1, 1)], dim=1)
-        bond_feature = torch.cat([bond_feature, V_e_x.reshape(-1, 1)], dim=1)
-        if Use_column_info==True:
-            diameter=torch.ones([bond_feature.shape[0]]) * 1.5
-            column_length=torch.ones([bond_feature.shape[0]]) * 6.6
-            density=torch.ones([bond_feature.shape[0]]) * 0.4458
-            bond_feature = torch.cat([bond_feature, diameter.reshape(-1, 1)], dim=1)
-            bond_feature = torch.cat([bond_feature, column_length.reshape(-1, 1)], dim=1)
-            bond_feature = torch.cat([bond_feature, density.reshape(-1, 1)], dim=1)
-
-        bond_angle_feature=bond_angle_feature.reshape(-1,1)
-        bond_angle_feature = torch.cat([bond_angle_feature.reshape(-1, 1), bond_angle_descriptor], dim=1)
-
-
-        data_atom_bond = Data(atom_feature, edge_index, bond_feature, y,data_index=data_index_int)
-        data_bond_angle= Data(edge_index=bond_index, edge_attr=bond_angle_feature)
-        graph_atom_bond.append(data_atom_bond)
-        graph_bond_angle.append(data_bond_angle)
-    return graph_atom_bond,graph_bond_angle
-
-
-def Construct_dataset_8g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
-    graph_atom_bond = []
-    graph_bond_angle = []
-    big_index = []
-    all_descriptor = np.load('dataset_save/dataset_morder_8g.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
-    all_attribute= np.load('dataset_save/dataset_attribute_8g.npy')
-    all_descriptor=np.hstack((all_attribute,all_descriptor))
-    # np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
-    # np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
-    # np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
-    # np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
-    all_descriptor = (all_descriptor - np.min(all_descriptor, axis=0)) / (np.max(all_descriptor, axis=0) - np.min(all_descriptor, axis=0) + 1e-8)
-    eluent = (eluent - np.min(eluent, axis=0)) / (np.max(eluent, axis=0) - np.min(eluent, axis=0) + 1e-8)
-    all_descriptor= torch.from_numpy(np.array(all_descriptor)).to(torch.int64)
-    for i in range(len(dataset)):
-        data = dataset[i]
-        atom_feature = []
-        bond_feature = []
-        for name in atom_id_names:
-            atom_feature.append(data[name])
-        for name in bond_id_names:
-            bond_feature.append(data[name])
-        atom_feature = torch.from_numpy(np.array(atom_feature).T).to(torch.int64)
-        bond_feature = torch.from_numpy(np.array(bond_feature).T).to(torch.int64)
-        bond_float_feature = torch.from_numpy(data['bond_length'].astype(np.float32))
-        bond_angle_feature = torch.from_numpy(data['bond_angle'].astype(np.float32))
-        y = torch.Tensor([T1_s[i]*speed[i],T2_s[i]*speed[i]]).reshape(1,2)
-        edge_index = torch.from_numpy(data['edges'].T).to(torch.int64)
-        bond_index = torch.from_numpy(data['BondAngleGraph_edges'].T).to(torch.int64)
-        data_index_int=torch.from_numpy(np.array(data_index[i])).to(torch.int64)
-        if y[0,0] > 60:
-            continue
-        if y[0,1]> 120:
-            continue
         prop=torch.ones([bond_feature.shape[0],eluent.shape[1]])*eluent[i]
         e_x = torch.ones([bond_feature.shape[0]]) * e[i]
         m_x = torch.ones([bond_feature.shape[0]]) * m[i]
         V_e_x = torch.ones([bond_feature.shape[0]]) * V_e[i]
+        
 
 
         bond_angle_descriptor=torch.ones([bond_angle_feature.shape[0],all_descriptor.shape[1]])*all_descriptor[i]
@@ -1647,6 +1648,7 @@ def Construct_dataset_8g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
         bond_feature = torch.cat([bond_feature, e_x.reshape(-1, 1)], dim=1)
         bond_feature = torch.cat([bond_feature, m_x.reshape(-1, 1)], dim=1)
         bond_feature = torch.cat([bond_feature, V_e_x.reshape(-1, 1)], dim=1)
+        
         if Use_column_info==True:
             diameter = torch.ones([bond_feature.shape[0]]) * 1.5
             column_length = torch.ones([bond_feature.shape[0]]) * 13.2
@@ -1669,13 +1671,13 @@ def Construct_dataset_25g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
     graph_atom_bond = []
     graph_bond_angle = []
     big_index = []
-    all_descriptor = np.load('dataset_save/dataset_morder_25g.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
+    all_descriptor = np.load('dataset_save/dataset_morder_25g.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768, 1769, 1288, 1521]]
     all_attribute= np.load('dataset_save/dataset_attribute_25g.npy')
     all_descriptor=np.hstack((all_attribute,all_descriptor))
-    # np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
-    # np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
-    # np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
-    # np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
+    np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
+    np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
+    np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
+    np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
     all_descriptor = (all_descriptor - np.min(all_descriptor, axis=0)) / (np.max(all_descriptor, axis=0) - np.min(all_descriptor, axis=0) + 1e-8)
     eluent = (eluent - np.min(eluent, axis=0)) / (np.max(eluent, axis=0) - np.min(eluent, axis=0) + 1e-8)
     all_descriptor= torch.from_numpy(np.array(all_descriptor)).to(torch.int64)
@@ -1703,6 +1705,7 @@ def Construct_dataset_25g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
         e_x = torch.ones([bond_feature.shape[0]]) * e[i]
         m_x = torch.ones([bond_feature.shape[0]]) * m[i]
         V_e_x = torch.ones([bond_feature.shape[0]]) * V_e[i]
+        
 
 
         bond_angle_descriptor=torch.ones([bond_angle_feature.shape[0],all_descriptor.shape[1]])*all_descriptor[i]
@@ -1712,6 +1715,7 @@ def Construct_dataset_25g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
         bond_feature = torch.cat([bond_feature, e_x.reshape(-1, 1)], dim=1)
         bond_feature = torch.cat([bond_feature, m_x.reshape(-1, 1)], dim=1)
         bond_feature = torch.cat([bond_feature, V_e_x.reshape(-1, 1)], dim=1)
+        
         if Use_column_info==True:
             diameter = torch.ones([bond_feature.shape[0]]) * 2.15
             column_length = torch.ones([bond_feature.shape[0]]) * 15.6
@@ -1737,10 +1741,10 @@ def Construct_dataset_40g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
     all_descriptor = np.load('dataset_save/dataset_morder_40g.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
     all_attribute= np.load('dataset_save/dataset_attribute_40g.npy')
     all_descriptor=np.hstack((all_attribute,all_descriptor))
-    # np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
-    # np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
-    # np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
-    # np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
+    np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
+    np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
+    np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
+    np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
     all_descriptor = (all_descriptor - np.min(all_descriptor, axis=0)) / (np.max(all_descriptor, axis=0) - np.min(all_descriptor, axis=0) + 1e-8)
     eluent = (eluent - np.min(eluent, axis=0)) / (np.max(eluent, axis=0) - np.min(eluent, axis=0) + 1e-8)
     all_descriptor= torch.from_numpy(np.array(all_descriptor)).to(torch.int64)
@@ -1768,6 +1772,7 @@ def Construct_dataset_40g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
         e_x = torch.ones([bond_feature.shape[0]]) * e[i]
         m_x = torch.ones([bond_feature.shape[0]]) * m[i]
         V_e_x = torch.ones([bond_feature.shape[0]]) * V_e[i]
+        
 
 
         bond_angle_descriptor=torch.ones([bond_angle_feature.shape[0],all_descriptor.shape[1]])*all_descriptor[i]
@@ -1777,6 +1782,7 @@ def Construct_dataset_40g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
         bond_feature = torch.cat([bond_feature, e_x.reshape(-1, 1)], dim=1)
         bond_feature = torch.cat([bond_feature, m_x.reshape(-1, 1)], dim=1)
         bond_feature = torch.cat([bond_feature, V_e_x.reshape(-1, 1)], dim=1)
+        
         if Use_column_info==True:
             diameter = torch.ones([bond_feature.shape[0]]) * 2.15
             column_length = torch.ones([bond_feature.shape[0]]) * 15.6
@@ -1795,6 +1801,202 @@ def Construct_dataset_40g(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
         graph_bond_angle.append(data_bond_angle)
     return graph_atom_bond,graph_bond_angle
 
+def Construct_dataset_DCM(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
+    graph_atom_bond = []
+    graph_bond_angle = []
+    big_index = []
+    all_descriptor = np.load('dataset_save/dataset_morder_DCM.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
+    all_attribute= np.load('dataset_save/dataset_attribute_DCM.npy')
+    all_descriptor=np.hstack((all_attribute,all_descriptor))
+    # np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
+    # np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
+    # np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
+    # np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
+    all_descriptor = (all_descriptor - np.min(all_descriptor, axis=0)) / (np.max(all_descriptor, axis=0) - np.min(all_descriptor, axis=0) + 1e-8)
+    eluent = (eluent - np.min(eluent, axis=0)) / (np.max(eluent, axis=0) - np.min(eluent, axis=0) + 1e-8)
+    all_descriptor= torch.from_numpy(np.array(all_descriptor)).to(torch.int64)
+    for i in range(len(dataset)):
+        data = dataset[i]
+        atom_feature = []
+        bond_feature = []
+        for name in atom_id_names:
+            atom_feature.append(data[name])
+        for name in bond_id_names:
+            bond_feature.append(data[name])
+        atom_feature = torch.from_numpy(np.array(atom_feature).T).to(torch.int64)
+        bond_feature = torch.from_numpy(np.array(bond_feature).T).to(torch.int64)
+        bond_float_feature = torch.from_numpy(data['bond_length'].astype(np.float32))
+        bond_angle_feature = torch.from_numpy(data['bond_angle'].astype(np.float32))
+        y = torch.Tensor([T1_s[i]*speed[i],T2_s[i]*speed[i]]).reshape(1,2)
+        edge_index = torch.from_numpy(data['edges'].T).to(torch.int64)
+        bond_index = torch.from_numpy(data['BondAngleGraph_edges'].T).to(torch.int64)
+        data_index_int=torch.from_numpy(np.array(data_index[i])).to(torch.int64)
+        if y[0,0] > 60:
+            continue
+        if y[0,1]> 120:
+            continue
+        prop=torch.ones([bond_feature.shape[0],eluent.shape[1]])*eluent[i]
+        e_x = torch.ones([bond_feature.shape[0]]) * e[i]
+        m_x = torch.ones([bond_feature.shape[0]]) * m[i]
+        V_e_x = torch.ones([bond_feature.shape[0]]) * V_e[i]
+
+        bond_angle_descriptor=torch.ones([bond_angle_feature.shape[0],all_descriptor.shape[1]])*all_descriptor[i]
+        if Use_geometry_enhanced == True:
+            bond_feature = torch.cat([bond_feature, bond_float_feature.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, prop], dim=1)
+            bond_feature = torch.cat([bond_feature, e_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, m_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, V_e_x.reshape(-1, 1)], dim=1)
+        if Use_column_info==True:
+            diameter = torch.ones([bond_feature.shape[0]]) * 2.15
+            column_length = torch.ones([bond_feature.shape[0]]) * 15.6
+            density = torch.ones([bond_feature.shape[0]]) * 0.5248
+            bond_feature = torch.cat([bond_feature, diameter.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, column_length.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, density.reshape(-1, 1)], dim=1)
+
+        bond_angle_feature=bond_angle_feature.reshape(-1,1)
+        bond_angle_feature = torch.cat([bond_angle_feature.reshape(-1, 1), bond_angle_descriptor], dim=1)
+
+
+        data_atom_bond = Data(atom_feature, edge_index, bond_feature, y,data_index=data_index_int)
+        data_bond_angle= Data(edge_index=bond_index, edge_attr=bond_angle_feature)
+        graph_atom_bond.append(data_atom_bond)
+        graph_bond_angle.append(data_bond_angle)
+    return graph_atom_bond,graph_bond_angle
+
+def Construct_dataset_C18(dataset,data_index, T1_s,T2_s,speed, eluent,e,m,V_e):
+    graph_atom_bond = []
+    graph_bond_angle = []
+    big_index = []
+    all_descriptor = np.load('dataset_save/dataset_morder_C18.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
+    all_attribute= np.load('dataset_save/dataset_attribute_C18.npy')
+    all_descriptor=np.hstack((all_attribute,all_descriptor))
+    # np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
+    # np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
+    # np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
+    # np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
+    all_descriptor = (all_descriptor - np.min(all_descriptor, axis=0)) / (np.max(all_descriptor, axis=0) - np.min(all_descriptor, axis=0) + 1e-8)
+    eluent = (eluent - np.min(eluent, axis=0)) / (np.max(eluent, axis=0) - np.min(eluent, axis=0) + 1e-8)
+    all_descriptor= torch.from_numpy(np.array(all_descriptor)).to(torch.int64)
+    for i in range(len(dataset)):
+        data = dataset[i]
+        atom_feature = []
+        bond_feature = []
+        for name in atom_id_names:
+            atom_feature.append(data[name])
+        for name in bond_id_names:
+            bond_feature.append(data[name])
+        atom_feature = torch.from_numpy(np.array(atom_feature).T).to(torch.int64)
+        bond_feature = torch.from_numpy(np.array(bond_feature).T).to(torch.int64)
+        bond_float_feature = torch.from_numpy(data['bond_length'].astype(np.float32))
+        bond_angle_feature = torch.from_numpy(data['bond_angle'].astype(np.float32))
+        y = torch.Tensor([T1_s[i]*speed[i],T2_s[i]*speed[i]]).reshape(1,2)
+        edge_index = torch.from_numpy(data['edges'].T).to(torch.int64)
+        bond_index = torch.from_numpy(data['BondAngleGraph_edges'].T).to(torch.int64)
+        data_index_int=torch.from_numpy(np.array(data_index[i])).to(torch.int64)
+        if y[0,0] > 60:
+            continue
+        if y[0,1]> 120:
+            continue
+        prop=torch.ones([bond_feature.shape[0],eluent.shape[1]])*eluent[i]
+        e_x = torch.ones([bond_feature.shape[0]]) * e[i]
+        m_x = torch.ones([bond_feature.shape[0]]) * m[i]
+        V_e_x = torch.ones([bond_feature.shape[0]]) * V_e[i]
+       
+
+        bond_angle_descriptor=torch.ones([bond_angle_feature.shape[0],all_descriptor.shape[1]])*all_descriptor[i]
+        if Use_geometry_enhanced == True:
+            bond_feature = torch.cat([bond_feature, bond_float_feature.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, prop], dim=1)
+            bond_feature = torch.cat([bond_feature, e_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, m_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, V_e_x.reshape(-1, 1)], dim=1)
+            
+        if Use_column_info==True:
+            diameter = torch.ones([bond_feature.shape[0]]) * 2.15
+            column_length = torch.ones([bond_feature.shape[0]]) * 15.6
+            density = torch.ones([bond_feature.shape[0]]) * 0.5248
+            bond_feature = torch.cat([bond_feature, diameter.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, column_length.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, density.reshape(-1, 1)], dim=1)
+
+        bond_angle_feature=bond_angle_feature.reshape(-1,1)
+        bond_angle_feature = torch.cat([bond_angle_feature.reshape(-1, 1), bond_angle_descriptor], dim=1)
+
+
+        data_atom_bond = Data(atom_feature, edge_index, bond_feature, y,data_index=data_index_int)
+        data_bond_angle= Data(edge_index=bond_index, edge_attr=bond_angle_feature)
+        graph_atom_bond.append(data_atom_bond)
+        graph_bond_angle.append(data_bond_angle)
+    return graph_atom_bond,graph_bond_angle
+
+def Construct_dataset_reversed(dataset, data_index, T1_s, T2_s, speed, eluent, e, m, V_e, C_c):#column_dia,column_len, column_den,
+    graph_atom_bond = []
+    graph_bond_angle = []
+    big_index = []
+    all_descriptor = np.load('dataset_save/dataset_morder_reversed.npy')[:,[153, 278, 884, 885, 1273, 1594, 431, 1768,1769, 1288, 1521]]
+    all_attribute = np.load('dataset_save/dataset_attribute_reversed.npy')
+    all_descriptor = np.hstack((all_attribute,all_descriptor))
+    np.save('dataset_save/X_max_eluent.npy', np.max(eluent, axis=0))
+    np.save('dataset_save/X_min_eluent.npy', np.min(eluent, axis=0))
+    np.save('dataset_save/X_max_descriptor.npy', np.max(all_descriptor, axis=0))
+    np.save('dataset_save/X_min_descriptor.npy', np.min(all_descriptor, axis=0))
+    all_descriptor = (all_descriptor - np.min(all_descriptor, axis=0)) / (np.max(all_descriptor, axis=0) - np.min(all_descriptor, axis=0) + 1e-8)
+    eluent = (eluent - np.min(eluent, axis=0)) / (np.max(eluent, axis=0) - np.min(eluent, axis=0) + 1e-8)
+    all_descriptor= torch.from_numpy(np.array(all_descriptor)).to(torch.int64)
+    for i in range(len(dataset)):
+        data = dataset[i]
+        atom_feature = []
+        bond_feature = []
+        for name in atom_id_names:
+            atom_feature.append(data[name])
+        for name in bond_id_names:
+            bond_feature.append(data[name])
+        atom_feature = torch.from_numpy(np.array(atom_feature).T).to(torch.int64)
+        bond_feature = torch.from_numpy(np.array(bond_feature).T).to(torch.int64)
+        bond_float_feature = torch.from_numpy(data['bond_length'].astype(np.float32))
+        bond_angle_feature = torch.from_numpy(data['bond_angle'].astype(np.float32))
+        y = torch.Tensor([T1_s[i]*speed[i],T2_s[i]*speed[i]]).reshape(1,2)
+        edge_index = torch.from_numpy(data['edges'].T).to(torch.int64)
+        bond_index = torch.from_numpy(data['BondAngleGraph_edges'].T).to(torch.int64)
+        data_index_int=torch.from_numpy(np.array(data_index[i])).to(torch.int64)
+        if y[0, 0] > 60:
+            continue
+        if y[0, 1] > 120:
+            continue
+        prop = torch.ones([bond_feature.shape[0], eluent.shape[1]]) * eluent[i]
+        e_x = torch.ones([bond_feature.shape[0]]) * e[i]
+        m_x = torch.ones([bond_feature.shape[0]]) * m[i]
+        V_e_x = torch.ones([bond_feature.shape[0]]) * V_e[i]
+        cx = torch.ones([bond_feature.shape[0]]) * C_c[i]
+
+        bond_angle_descriptor = torch.ones([bond_angle_feature.shape[0],all_descriptor.shape[1]])*all_descriptor[i]
+        if Use_geometry_enhanced == True:
+            bond_feature = torch.cat([bond_feature, bond_float_feature.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, prop], dim=1)
+            bond_feature = torch.cat([bond_feature, e_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, m_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, V_e_x.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, cx.reshape(-1, 1)], dim=1)
+        if Use_column_info==True:
+            diameter=torch.ones([bond_feature.shape[0]]) * column_dia[i]
+            column_length=torch.ones([bond_feature.shape[0]]) * column_len[i]
+            density=torch.ones([bond_feature.shape[0]]) * column_den[i]
+            bond_feature = torch.cat([bond_feature, diameter.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, column_length.reshape(-1, 1)], dim=1)
+            bond_feature = torch.cat([bond_feature, density.reshape(-1, 1)], dim=1)
+
+        bond_angle_feature = bond_angle_feature.reshape(-1,1)
+        bond_angle_feature = torch.cat([bond_angle_feature.reshape(-1, 1), bond_angle_descriptor], dim=1)
+
+
+        data_atom_bond = Data(atom_feature, edge_index, bond_feature, y,data_index=data_index_int)
+        data_bond_angle= Data(edge_index=bond_index, edge_attr=bond_angle_feature)
+        graph_atom_bond.append(data_atom_bond)
+        graph_bond_angle.append(data_bond_angle)
+    return graph_atom_bond,graph_bond_angle
+
 def train(model, device, loader_atom_bond, loader_bond_angle, optimizer, criterion_fn):
     model.train()
     loss_accum = 0
@@ -1804,7 +2006,7 @@ def train(model, device, loader_atom_bond, loader_bond_angle, optimizer, criteri
         batch_bond_angle=batch[1]
         batch_atom_bond = batch_atom_bond.to(device)
         batch_bond_angle=batch_bond_angle.to(device)
-        pred = model(batch_atom_bond,batch_bond_angle)[0]#.view(-1, )
+        pred = model(batch_atom_bond,batch_bond_angle)[0]
         true_1=batch_atom_bond.y[:,0]
         true_2=batch_atom_bond.y[:,1]
         optimizer.zero_grad()
@@ -1820,10 +2022,10 @@ def train(model, device, loader_atom_bond, loader_bond_angle, optimizer, criteri
     return loss_accum / (step + 1)
 
 def QGeoGNN(data,MODEL):
-    # bad_mol = save_3D_mol(data['smiles'], '3D_mol_1124')
-    # np.save('3D_mol_1124/bad_mol.npy', np.array(bad_mol))
-    # bad_mol=np.load('3D_mol_1124/bad_mol.npy')
-    # save_dataset(data['smiles'], '3D_mol_1124', '1124', bad_mol)
+    bad_mol = save_3D_mol(data['smiles'], '3D_mol_4g')
+    np.save('3D_mol_4g/bad_mol.npy', np.array(bad_mol))
+    bad_mol=np.load('3D_mol_4g/bad_mol.npy')
+    save_dataset(data['smiles'], '3D_mol_4g', '4g', bad_mol)
     args = parse_args()
     prepartion(args)
     nn_params = {
@@ -1834,10 +2036,10 @@ def QGeoGNN(data,MODEL):
         'graph_pooling': args.graph_pooling,
         'descriptor_dim': 1827
     }
-    dataset = np.load('dataset_save/dataset_1124.npy', allow_pickle=True).tolist()
+    dataset = np.load('dataset_save/dataset_4g.npy', allow_pickle=True).tolist()
     data_index=np.arange(0,len(dataset),1)
     dataset_graph_atom_bond, dataset_graph_bond_angle= Construct_dataset(dataset,data_index,data['t1'],data['t2'],data['speed'],
-                                                                         data['eluent'],data['e'],data['m'],data['V_e'])
+                                                                         data['eluent'],data['e'],data['m'],data['V_e'])#data['column_dia'], data['column_len'], data['column_den'],
     total_num = len(dataset_graph_atom_bond)
     print(total_num)
 
@@ -1845,8 +2047,8 @@ def QGeoGNN(data,MODEL):
     validate_ratio = 0.1
     test_ratio = 0.1
 
-    random.seed(525)
-    np.random.seed(1101)
+    random.seed(42)
+    np.random.seed(42)
     if split_mode=='data':
     # automatic dataloading and splitting
         data_array = np.arange(0, total_num, 1)
@@ -1927,12 +2129,12 @@ def QGeoGNN(data,MODEL):
     if MODEL == 'Train':
         if Use_geometry_enhanced==True:
             try:
-                os.makedirs(f'saves/model_GeoGNN_1124')
+                os.makedirs(f'saves/model_GeoGNN_4g')
             except OSError:
                 pass
         if Use_geometry_enhanced == False:
             try:
-                os.makedirs(f'saves/model_GNN_1124')
+                os.makedirs(f'saves/model_GNN_4g')
             except OSError:
                 pass
 
@@ -1945,30 +2147,30 @@ def QGeoGNN(data,MODEL):
                 y_true_1,y_pred_1,y_true_2,y_pred_2,R_square_1, test_mae_1, R_square_2,test_mae_2 = test(model, device, test_loader_atom_bond,
                                                                                 test_loader_bond_angle)
                 if Use_geometry_enhanced == True:
-                    with open(f"saves/model_GeoGNN_1124/GeoGNN.log", "a+") as f:
+                    with open(f"saves/model_GeoGNN_4g/GeoGNN.log", "a+") as f:
                         f.write(
                             f'epoch: {epoch+1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
                             f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
                 if Use_geometry_enhanced == False:
-                    with open(f"saves/model_GNN_1124/GNN.log", "a+") as f:
+                    with open(f"saves/model_GNN_4g/GNN.log", "a+") as f:
                         f.write(
                             f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
                             f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
 
                 print(train_mae, valid_mae_1,valid_mae_2, R_square_1, test_mae_1, R_square_2,test_mae_2)
                 if Use_geometry_enhanced==True:
-                    torch.save(model.state_dict(), f'saves/model_GeoGNN_1124/model_save_{epoch + 1}.pth')
+                    torch.save(model.state_dict(), f'saves/model_GeoGNN_4g/model_save_{epoch + 1}.pth')
                 if Use_geometry_enhanced==False:
-                    torch.save(model.state_dict(), f'saves/model_GNN_1124/model_save_{epoch + 1}.pth')
+                    torch.save(model.state_dict(), f'saves/model_GNN_4g/model_save_{epoch + 1}.pth')
 
     if MODEL == 'Test':
         if split_mode=='data':
             if Use_geometry_enhanced==False:
                 model.load_state_dict(
-                    torch.load(f'saves/model_GNN_1031/model_save_950.pth'))
+                    torch.load(f'saves/model_GNN_4g/model_save_200.pth'))
             if Use_geometry_enhanced == True:
                 model.load_state_dict(
-                    torch.load(f'saves/model_GeoGNN_1124/model_save_300.pth'))
+                    torch.load(f'saves/model_GeoGNN_4g/model_save_200.pth'))
         elif split_mode=='compound':
             model.load_state_dict(
                 torch.load(f'saves/model_GeoGNN_compound_1031/model_save_950.pth'))
@@ -2036,7 +2238,7 @@ def QGeoGNN_cycle(data,MODEL):
         'graph_pooling': args.graph_pooling,
         'descriptor_dim': 1827
     }
-    dataset = np.load('dataset_save/dataset_1124.npy', allow_pickle=True).tolist()
+    dataset = np.load('dataset_save/dataset_4g.npy', allow_pickle=True).tolist()
     data_index=np.arange(0,len(dataset),1)
     dataset_graph_atom_bond, dataset_graph_bond_angle= Construct_dataset(dataset,data_index,data['t1'],data['t2'],data['speed'],
                                                                          data['eluent'],data['e'],data['m'],data['V_e'])
@@ -2088,7 +2290,7 @@ def QGeoGNN_cycle(data,MODEL):
 
         print(test_data_atom_bond[0].y, test_data_atom_bond[0].data_index)
         index_tuple={'train_index':train_index,'valid_index':valid_index,'test_index':test_index}
-        np.save(f'result_save/cross_iter/index_{cross_iter}_1124.npy',index_tuple)
+        np.save(f'result_save/cross_iter/index_{cross_iter}_total.npy',index_tuple)
 
         train_loader_atom_bond = DataLoader(train_data_atom_bond, batch_size=args.batch_size, shuffle=False,
                                             num_workers=args.num_workers)
@@ -2115,7 +2317,7 @@ def QGeoGNN_cycle(data,MODEL):
 
         if MODEL == 'Train':
             try:
-                os.makedirs(f'saves/model_{cross_iter}_1124')
+                os.makedirs(f'saves/model_{cross_iter}_0526')
             except OSError:
                 pass
 
@@ -2128,13 +2330,13 @@ def QGeoGNN_cycle(data,MODEL):
                     y_true_1,y_pred_1,y_true_2,y_pred_2,R_square_1, test_mae_1, R_square_2,test_mae_2 = test(model, device, test_loader_atom_bond,
                                                                                     test_loader_bond_angle)
 
-                    with open(f"saves/model_{cross_iter}_1124/GeoGNN.log", "a+") as f:
+                    with open(f"saves/model_{cross_iter}_0526/GeoGNN.log", "a+") as f:
                             f.write(
                                 f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
                                 f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
 
                     print(train_mae, valid_mae_1,valid_mae_2, R_square_1, test_mae_1, R_square_2,test_mae_2)
-                    torch.save(model.state_dict(), f'saves/model_{cross_iter}_1124/model_save_{epoch + 1}.pth')
+                    torch.save(model.state_dict(), f'saves/model_{cross_iter}_total/model_save_{epoch + 1}.pth')
 
         if MODEL == 'Test':
             best_epoch=[50,600,350,750,50,50,400,600,100,50,100,500,100,50,50,750,800,650,150,50]
@@ -2177,7 +2379,7 @@ def QGeoGNN_cycle(data,MODEL):
 
 def QGeoGNN_transfer_8g(data,MODEL):
     split_mode = 'data'
-    transfer_mode='no_transfer'
+    transfer_mode='transfer'
     # bad_mol = save_3D_mol(data['smiles'], '3D_mol_8g')
     # np.save('3D_mol_8g/bad_mol.npy', np.array(bad_mol))
     # bad_mol=np.load('3D_mol_8g/bad_mol.npy')
@@ -2194,10 +2396,8 @@ def QGeoGNN_transfer_8g(data,MODEL):
     }
     dataset = np.load('dataset_save/dataset_8g.npy', allow_pickle=True).tolist()
     data_index = np.arange(0, len(dataset), 1)
-    dataset_graph_atom_bond, dataset_graph_bond_angle = Construct_dataset_8g(dataset, data_index, data['t1'], data['t2'],
-                                                                          data['speed'],
-                                                                          data['eluent'], data['e'], data['m'],
-                                                                          data['V_e'])
+    dataset_graph_atom_bond, dataset_graph_bond_angle = Construct_dataset_8g(dataset, data_index,data['t1'],data['t2'],data['speed'],
+                                                                         data['eluent'],data['e'],data['m'], data['V_e'])
     total_num = len(dataset_graph_atom_bond)
     print(total_num)
 
@@ -2276,11 +2476,10 @@ def QGeoGNN_transfer_8g(data,MODEL):
     criterion_fn = torch.nn.MSELoss()
     model = GINGraphPooling(**nn_params).to(device)
     if transfer_mode=='transfer':
-        model.load_state_dict(
-            torch.load(f'saves/model_GeoGNN_1031/model_save_400.pth'))
+        model.load_state_dict(torch.load(f'saves/model_GeoGNN_4g/model_save_200.pth'))
     num_params = sum(p.numel() for p in model.parameters())
 
-    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=0.00001, weight_decay=args.weight_decay)
     writer = SummaryWriter(log_dir=args.save_dir)
     scheduler = StepLR(optimizer, step_size=50, gamma=0.5)
     print('===========Data Prepared================')
@@ -2297,11 +2496,11 @@ def QGeoGNN_transfer_8g(data,MODEL):
             except OSError:
                 pass
 
-        for epoch in tqdm(range(1000)):
+        for epoch in tqdm(range(500)):
 
             train_mae = train(model, device, train_loader_atom_bond, train_loader_bond_angle, optimizer, criterion_fn)
 
-            if (epoch + 1) % 50 == 0:
+            if (epoch + 1) % 20 == 0:
                 valid_mae_1, valid_mae_2 = eval(model, device, valid_loader_atom_bond, valid_loader_bond_angle)
                 y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model,
                                                                                                               device,
@@ -2326,13 +2525,13 @@ def QGeoGNN_transfer_8g(data,MODEL):
     if MODEL == 'Test':
         if transfer_mode == 'direct_train':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_direct_train_8g/model_save_950.pth'))
+                torch.load(f'saves/model_GeoGNN_direct_train_8g/model_save_100.pth'))
         if transfer_mode == 'transfer':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_transfer_8g/model_save_50.pth'))
+                torch.load(f'saves/model_GeoGNN_transfer_8g/model_save_300.pth'))
         if transfer_mode == 'no_transfer':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_1031/model_save_400.pth'))
+                torch.load(f'saves/model_GeoGNN_4g/model_save_450.pth'))
         y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model, device,
                                                                                                       test_loader_atom_bond,
                                                                                                       test_loader_bond_angle)
@@ -2381,13 +2580,10 @@ def QGeoGNN_transfer_8g(data,MODEL):
                 f.write(
                     f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
         return y_true_1, y_pred_1, y_true_2, y_pred_2
+
 def QGeoGNN_transfer_25g(data,MODEL):
     split_mode = 'data'
-    transfer_mode='no_transfer'
-    # bad_mol = save_3D_mol(data['smiles'], '3D_mol_25g')
-    # np.save('3D_mol_25g/bad_mol.npy', np.array(bad_mol))
-    # bad_mol=np.load('3D_mol_25g/bad_mol.npy')
-    # save_dataset(data['smiles'], '3D_mol_25g', '25g', bad_mol)
+    transfer_mode='direct_train'
     args = parse_args()
     prepartion(args)
     nn_params = {
@@ -2401,9 +2597,9 @@ def QGeoGNN_transfer_25g(data,MODEL):
     dataset = np.load('dataset_save/dataset_25g.npy', allow_pickle=True).tolist()
     data_index = np.arange(0, len(dataset), 1)
     dataset_graph_atom_bond, dataset_graph_bond_angle = Construct_dataset_25g(dataset, data_index, data['t1'], data['t2'],
-                                                                          data['speed'],
-                                                                          data['eluent'], data['e'], data['m'],
+                                                                          data['speed'],data['eluent'], data['e'], data['m'],
                                                                           data['V_e'])
+
     total_num = len(dataset_graph_atom_bond)
     print(total_num)
 
@@ -2483,7 +2679,7 @@ def QGeoGNN_transfer_25g(data,MODEL):
     model = GINGraphPooling(**nn_params).to(device)
     if transfer_mode=='transfer':
         model.load_state_dict(
-            torch.load(f'saves/model_GeoGNN_1031/model_save_400.pth'))
+            torch.load(f'saves/model_GeoGNN_4g/model_save_200.pth'))
 
     num_params = sum(p.numel() for p in model.parameters())
 
@@ -2504,11 +2700,11 @@ def QGeoGNN_transfer_25g(data,MODEL):
             except OSError:
                 pass
 
-        for epoch in tqdm(range(200)):
+        for epoch in tqdm(range(500)):
 
             train_mae = train(model, device, train_loader_atom_bond, train_loader_bond_angle, optimizer, criterion_fn)
 
-            if (epoch + 1) % 10 == 0:
+            if (epoch + 1) % 20 == 0:
                 valid_mae_1, valid_mae_2 = eval(model, device, valid_loader_atom_bond, valid_loader_bond_angle)
                 y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model,
                                                                                                               device,
@@ -2534,13 +2730,13 @@ def QGeoGNN_transfer_25g(data,MODEL):
     if MODEL == 'Test':
         if transfer_mode == 'direct_train':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_direct_train_25g/model_save_1000.pth'))
+                torch.load(f'saves/model_GeoGNN_direct_train_25g/model_save_80.pth'))
         if transfer_mode == 'transfer':
             model.load_state_dict(
                 torch.load(f'saves/model_GeoGNN_transfer_25g/model_save_90.pth'))
         if transfer_mode == 'no_transfer':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_1031/model_save_400.pth'))
+                torch.load(f'saves/model_GeoGNN_total/model_save_400.pth'))
         y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model, device,
                                                                                                       test_loader_atom_bond,
                                                                                                       test_loader_bond_angle)
@@ -2591,13 +2787,10 @@ def QGeoGNN_transfer_25g(data,MODEL):
                     f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
 
         return y_true_1, y_pred_1, y_true_2, y_pred_2
-def QGeoGNN_transfer_40g(data,MODEL):
+
+def QGeoGNN_transfer_DCM(data,MODEL):
     split_mode = 'data'
-    transfer_mode='no_transfer'
-    # bad_mol = save_3D_mol(data['smiles'], '3D_mol_40g')
-    # np.save('3D_mol_40g/bad_mol.npy', np.array(bad_mol))
-    # bad_mol=np.load('3D_mol_40g/bad_mol.npy')
-    # save_dataset(data['smiles'], '3D_mol_40g', '40g', bad_mol)
+    transfer_mode='direct_train'
     args = parse_args()
     prepartion(args)
     nn_params = {
@@ -2608,18 +2801,226 @@ def QGeoGNN_transfer_40g(data,MODEL):
         'graph_pooling': args.graph_pooling,
         'descriptor_dim': 1827
     }
-    dataset = np.load('dataset_save/dataset_40g.npy', allow_pickle=True).tolist()
+    dataset = np.load('dataset_save/dataset_DCM.npy', allow_pickle=True).tolist()
     data_index = np.arange(0, len(dataset), 1)
-    dataset_graph_atom_bond, dataset_graph_bond_angle = Construct_dataset_40g(dataset, data_index, data['t1'], data['t2'],
+    dataset_graph_atom_bond, dataset_graph_bond_angle = Construct_dataset_DCM(dataset, data_index, data['t1'], data['t2'],
                                                                           data['speed'],
                                                                           data['eluent'], data['e'], data['m'],
                                                                           data['V_e'])
     total_num = len(dataset_graph_atom_bond)
     print(total_num)
 
-    train_ratio = 0.8
-    validate_ratio = 0.1
-    test_ratio = 0.1
+    train_ratio = 0.9
+    validate_ratio = 0.05
+    test_ratio = 0.05
+
+    random.seed(42)
+    np.random.seed(42)
+    if split_mode == 'data':
+        # automatic dataloading and splitting
+        data_array = np.arange(0, total_num, 1)
+        np.random.shuffle(data_array)
+        torch.random.manual_seed(525)
+
+        train_num = int(len(data_array) * train_ratio)
+        test_num = int(len(data_array) * test_ratio)
+        val_num = int(len(data_array) * validate_ratio)
+
+        train_index = data_array[0:train_num]
+        valid_index = data_array[train_num:train_num + val_num]
+        if test_mode == 'fixed':
+            test_index = data_array[total_num - test_num:]
+        if test_mode == 'random':
+            test_index = data_array[train_num + val_num:train_num + val_num + test_num]
+    if split_mode == 'compound':
+        efficient_index = np.load('dataset_save/compound_index.npy')
+        compound_index = np.unique(efficient_index)
+        all_index = np.arange(0, len(efficient_index), 1)
+        state = np.random.get_state()
+        np.random.shuffle(compound_index)
+        train_num = int(train_ratio * compound_index.shape[0])
+        val_num = int(validate_ratio * compound_index.shape[0])
+        test_num = int(test_ratio * compound_index.shape[0])
+        compound_index = compound_index.tolist()
+        compound_train = compound_index[0:train_num]
+        compound_valid = compound_index[train_num:train_num + val_num]
+        compound_test = compound_index[train_num + val_num:train_num + val_num + test_num]
+        train_index = all_index[np.isin(efficient_index, compound_train)]
+        valid_index = all_index[np.isin(efficient_index, compound_valid)]
+        test_index = all_index[np.isin(efficient_index, compound_test)]
+        print(test_index.shape)
+
+    train_data_atom_bond = []
+    valid_data_atom_bond = []
+    test_data_atom_bond = []
+    train_data_bond_angle = []
+    valid_data_bond_angle = []
+    test_data_bond_angle = []
+    for i in test_index:
+        test_data_atom_bond.append(dataset_graph_atom_bond[i])
+        test_data_bond_angle.append(dataset_graph_bond_angle[i])
+    for i in valid_index:
+        valid_data_atom_bond.append(dataset_graph_atom_bond[i])
+        valid_data_bond_angle.append(dataset_graph_bond_angle[i])
+    for i in train_index:
+        train_data_atom_bond.append(dataset_graph_atom_bond[i])
+        train_data_bond_angle.append(dataset_graph_bond_angle[i])
+
+    print(test_data_atom_bond[0].y, test_data_atom_bond[0].data_index)
+
+    train_loader_atom_bond = DataLoader(train_data_atom_bond, batch_size=args.batch_size, shuffle=False,
+                                        num_workers=args.num_workers)
+    valid_loader_atom_bond = DataLoader(valid_data_atom_bond, batch_size=args.batch_size, shuffle=False,
+                                        num_workers=args.num_workers)
+    test_loader_atom_bond = DataLoader(test_data_atom_bond, batch_size=args.batch_size, shuffle=False,
+                                       num_workers=args.num_workers)
+    train_loader_bond_angle = DataLoader(train_data_bond_angle, batch_size=args.batch_size, shuffle=False,
+                                         num_workers=args.num_workers)
+    valid_loader_bond_angle = DataLoader(valid_data_bond_angle, batch_size=args.batch_size, shuffle=False,
+                                         num_workers=args.num_workers)
+    test_loader_bond_angle = DataLoader(test_data_bond_angle, batch_size=args.batch_size, shuffle=False,
+                                        num_workers=args.num_workers)
+
+    device = args.device
+    criterion_fn = torch.nn.MSELoss()
+    model = GINGraphPooling(**nn_params).to(device)
+    if transfer_mode=='transfer':
+        model.load_state_dict(
+            torch.load(f'saves/model_GeoGNN_4g/model_save_200.pth'))
+
+    num_params = sum(p.numel() for p in model.parameters())
+
+    optimizer = optim.Adam(model.parameters(), lr=0.00001, weight_decay=args.weight_decay)
+    writer = SummaryWriter(log_dir=args.save_dir)
+    scheduler = StepLR(optimizer, step_size=50, gamma=0.5)
+    print('===========Data Prepared================')
+
+    if MODEL == 'Train':
+        if transfer_mode=='direct_train':
+            try:
+                os.makedirs(f'saves/model_GeoGNN_direct_train_DCM')
+            except OSError:
+                pass
+        elif transfer_mode=='transfer':
+            try:
+                os.makedirs(f'saves/model_GeoGNN_transfer_DCM')
+            except OSError:
+                pass
+
+        for epoch in tqdm(range(500)):
+
+            train_mae = train(model, device, train_loader_atom_bond, train_loader_bond_angle, optimizer, criterion_fn)
+
+            if (epoch + 1) % 20 == 0:
+                valid_mae_1, valid_mae_2 = eval(model, device, valid_loader_atom_bond, valid_loader_bond_angle)
+                y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model,
+                                                                                                              device,
+                                                                                                              test_loader_atom_bond,
+                                                                                                              test_loader_bond_angle)
+                if transfer_mode=='transfer':
+                    with open(f"saves/model_GeoGNN_transfer_DCM/GeoGNN.log", "a+") as f:
+                        f.write(
+                            f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
+                            f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
+
+                if transfer_mode=='direct_train':
+                    with open(f"saves/model_GeoGNN_direct_train_DCM/GeoGNN.log", "a+") as f:
+                        f.write(
+                            f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
+                            f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
+                print(train_mae, valid_mae_1, valid_mae_2, R_square_1, test_mae_1, R_square_2, test_mae_2)
+                if transfer_mode=='transfer':
+                    torch.save(model.state_dict(), f'saves/model_GeoGNN_transfer_DCM/model_save_{epoch + 1}.pth')
+                if transfer_mode == 'direct_train':
+                    torch.save(model.state_dict(), f'saves/model_GeoGNN_direct_train_DCM/model_save_{epoch + 1}.pth')
+
+    if MODEL == 'Test':
+        if transfer_mode == 'direct_train':
+            model.load_state_dict(
+                torch.load(f'saves/model_GeoGNN_direct_train_DCM/model_save_240.pth'))
+        if transfer_mode == 'transfer':
+            model.load_state_dict(
+                torch.load(f'saves/model_GeoGNN_transfer_DCM/model_save_940.pth'))
+        if transfer_mode == 'no_transfer':
+            model.load_state_dict(
+                torch.load(f'saves/model_GeoGNN_total/model_save_400.pth'))
+        y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model, device,
+                                                                                                      test_loader_atom_bond,
+                                                                                                      test_loader_bond_angle)
+
+        y_pred_t1 = y_pred_1.cpu().data.numpy()
+        y_true_t1 = y_true_1.cpu().data.numpy()
+        y_pred_t2 = y_pred_2.cpu().data.numpy()
+        y_true_t2 = y_true_2.cpu().data.numpy()
+        if transfer_mode == 'direct_train':
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_direct_train_DCM', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_direct_train_DCM', c='#6495ED')
+            df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
+                               'true_t2': y_true_t2.reshape(-1, ),
+                               'pred_t1': y_pred_t1.reshape(-1, ),
+                               'pred_t2': y_pred_t2.reshape(-1, )})
+            df.to_csv(f'result_save/GeoGNN_direct_train_DCM.csv')
+            with open(f"result_save/GeoGNN_direct_train_DCM.log", "w") as f:
+                f.write(
+                    f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
+                f.write(
+                    f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
+
+        if transfer_mode == 'transfer':
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_transfer_DCM', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_transfer_DCM', c='#6495ED')
+            df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
+                               'true_t2': y_true_t2.reshape(-1, ),
+                               'pred_t1': y_pred_t1.reshape(-1, ),
+                               'pred_t2': y_pred_t2.reshape(-1, )})
+            df.to_csv(f'result_save/GeoGNN_transfer_DCM.csv')
+            with open(f"result_save/GeoGNN_transfer_DCM.log", "w") as f:
+                f.write(
+                    f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
+                f.write(
+                    f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
+        if transfer_mode == 'no_transfer':
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_no_transfer_DCM', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_no_transfer_DCM', c='#6495ED')
+            df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
+                               'true_t2': y_true_t2.reshape(-1, ),
+                               'pred_t1': y_pred_t1.reshape(-1, ),
+                               'pred_t2': y_pred_t2.reshape(-1, )})
+            df.to_csv(f'result_save/GeoGNN_no_transfer_DCM.csv')
+            with open(f"result_save/GeoGNN_no_transfer_DCM.log", "w") as f:
+                f.write(
+                    f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
+                f.write(
+                    f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
+
+        return y_true_1, y_pred_1, y_true_2, y_pred_2
+
+def QGeoGNN_transfer_C18(data,MODEL):
+    # print("data keys:", data.keys())
+    split_mode = 'data'
+    transfer_mode='direct_train'
+    args = parse_args()
+    prepartion(args)
+    nn_params = {
+        'num_tasks': 6,
+        'num_layers': args.num_layers,
+        'emb_dim': args.emb_dim,
+        'drop_ratio': args.drop_ratio,
+        'graph_pooling': args.graph_pooling,
+        'descriptor_dim': 1827
+    }
+    dataset = np.load('dataset_save/dataset_C18.npy', allow_pickle=True).tolist()
+    data_index = np.arange(0, len(dataset), 1)
+    dataset_graph_atom_bond, dataset_graph_bond_angle = Construct_dataset_C18(dataset, data_index, data['t1'], data['t2'],
+                                                                          data['speed'],
+                                                                          data['eluent'], data['e'], data['m'],
+                                                                          data['V_e']) #
+    total_num = len(dataset_graph_atom_bond)
+    print(total_num)
+
+    train_ratio = 0.9
+    validate_ratio = 0.05
+    test_ratio = 0.05
 
     random.seed(525)
     np.random.seed(1101)
@@ -2693,11 +3094,11 @@ def QGeoGNN_transfer_40g(data,MODEL):
     model = GINGraphPooling(**nn_params).to(device)
     if transfer_mode=='transfer':
         model.load_state_dict(
-            torch.load(f'saves/model_GeoGNN_1031/model_save_400.pth'))
+            torch.load(f'saves/model_GeoGNN_4g/model_save_800.pth'))
 
     num_params = sum(p.numel() for p in model.parameters())
 
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=0.00001, weight_decay=args.weight_decay)
     writer = SummaryWriter(log_dir=args.save_dir)
     scheduler = StepLR(optimizer, step_size=50, gamma=0.5)
     print('===========Data Prepared================')
@@ -2705,52 +3106,52 @@ def QGeoGNN_transfer_40g(data,MODEL):
     if MODEL == 'Train':
         if transfer_mode=='direct_train':
             try:
-                os.makedirs(f'saves/model_GeoGNN_direct_train_40g')
+                os.makedirs(f'saves/model_GeoGNN_direct_train_C18')
             except OSError:
                 pass
         elif transfer_mode=='transfer':
             try:
-                os.makedirs(f'saves/model_GeoGNN_transfer_40g')
+                os.makedirs(f'saves/model_GeoGNN_transfer_C18')
             except OSError:
                 pass
 
-        for epoch in tqdm(range(500)):
+        for epoch in tqdm(range(1000)):
 
             train_mae = train(model, device, train_loader_atom_bond, train_loader_bond_angle, optimizer, criterion_fn)
 
-            if (epoch + 1) % 10 == 0:
+            if (epoch + 1) % 50 == 0:
                 valid_mae_1, valid_mae_2 = eval(model, device, valid_loader_atom_bond, valid_loader_bond_angle)
                 y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model,
                                                                                                               device,
                                                                                                               test_loader_atom_bond,
                                                                                                               test_loader_bond_angle)
                 if transfer_mode=='transfer':
-                    with open(f"saves/model_GeoGNN_transfer_40g/GeoGNN.log", "a+") as f:
+                    with open(f"saves/model_GeoGNN_transfer_C18/GeoGNN.log", "a+") as f:
                         f.write(
                             f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
                             f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
 
                 if transfer_mode=='direct_train':
-                    with open(f"saves/model_GeoGNN_direct_train_40g/GeoGNN.log", "a+") as f:
+                    with open(f"saves/model_GeoGNN_direct_train_C18/GeoGNN.log", "a+") as f:
                         f.write(
                             f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
                             f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
                 print(train_mae, valid_mae_1, valid_mae_2, R_square_1, test_mae_1, R_square_2, test_mae_2)
                 if transfer_mode=='transfer':
-                    torch.save(model.state_dict(), f'saves/model_GeoGNN_transfer_40g/model_save_{epoch + 1}.pth')
+                    torch.save(model.state_dict(), f'saves/model_GeoGNN_transfer_C18/model_save_{epoch + 1}.pth')
                 if transfer_mode == 'direct_train':
-                    torch.save(model.state_dict(), f'saves/model_GeoGNN_direct_train_40g/model_save_{epoch + 1}.pth')
+                    torch.save(model.state_dict(), f'saves/model_GeoGNN_direct_train_C18/model_save_{epoch + 1}.pth')
 
     if MODEL == 'Test':
         if transfer_mode == 'direct_train':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_direct_train_40g/model_save_1000.pth'))
+                torch.load(f'saves/model_GeoGNN_direct_train_C18/model_save_200.pth'))
         if transfer_mode == 'transfer':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_transfer_40g/model_save_460.pth'))
+                torch.load(f'saves/model_GeoGNN_transfer_C18/model_save_850.pth'))
         if transfer_mode == 'no_transfer':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_1031/model_save_400.pth'))
+                torch.load(f'saves/model_GeoGNN_total/model_save_400.pth'))
         y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model, device,
                                                                                                       test_loader_atom_bond,
                                                                                                       test_loader_bond_angle)
@@ -2760,51 +3161,52 @@ def QGeoGNN_transfer_40g(data,MODEL):
         y_pred_t2 = y_pred_2.cpu().data.numpy()
         y_true_t2 = y_true_2.cpu().data.numpy()
         if transfer_mode == 'direct_train':
-            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_direct_train_40g', c='#CD5C5C')
-            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_direct_train_40g', c='#6495ED')
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_direct_train_C18', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_direct_train_C18', c='#6495ED')
             df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
                                'true_t2': y_true_t2.reshape(-1, ),
                                'pred_t1': y_pred_t1.reshape(-1, ),
                                'pred_t2': y_pred_t2.reshape(-1, )})
-            df.to_csv(f'result_save/GeoGNN_direct_train_40g.csv')
-            with open(f"result_save/GeoGNN_direct_train_40g.log", "w") as f:
+            df.to_csv(f'result_save/GeoGNN_direct_train_C18.csv')
+            with open(f"result_save/GeoGNN_direct_train_C18.log", "w") as f:
                 f.write(
                     f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
                 f.write(
                     f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
 
         if transfer_mode == 'transfer':
-            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_transfer_40g', c='#CD5C5C')
-            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_transfer_40g', c='#6495ED')
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_transfer_C18', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_transfer_C18', c='#6495ED')
             df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
                                'true_t2': y_true_t2.reshape(-1, ),
                                'pred_t1': y_pred_t1.reshape(-1, ),
                                'pred_t2': y_pred_t2.reshape(-1, )})
-            df.to_csv(f'result_save/GeoGNN_transfer_40g.csv')
-            with open(f"result_save/GeoGNN_transfer_40g.log", "w") as f:
+            df.to_csv(f'result_save/GeoGNN_transfer_C18.csv')
+            with open(f"result_save/GeoGNN_transfer_C18.log", "w") as f:
                 f.write(
                     f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
                 f.write(
                     f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
         if transfer_mode == 'no_transfer':
-            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_no_transfer_40g', c='#CD5C5C')
-            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_no_transfer_40g', c='#6495ED')
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_no_transfer_C18', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_no_transfer_C18', c='#6495ED')
             df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
                                'true_t2': y_true_t2.reshape(-1, ),
                                'pred_t1': y_pred_t1.reshape(-1, ),
                                'pred_t2': y_pred_t2.reshape(-1, )})
-            df.to_csv(f'result_save/GeoGNN_no_transfer_40g.csv')
-            with open(f"result_save/GeoGNN_no_transfer_40g.log", "w") as f:
+            df.to_csv(f'result_save/GeoGNN_no_transfer_C18.csv')
+            with open(f"result_save/GeoGNN_no_transfer_C18.log", "w") as f:
                 f.write(
                     f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
                 f.write(
                     f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
 
         return y_true_1, y_pred_1, y_true_2, y_pred_2
-def QGeoGNN_transfer_column_info(data,data_8,data_25,MODEL):
-    Use_column_info = True
-    split_mode = 'data'
 
+def QGeoGNN_transfer_reversed(data,MODEL):
+    # print("data keys:", data.keys())
+    split_mode = 'data'
+    transfer_mode='transfer'
     args = parse_args()
     prepartion(args)
     nn_params = {
@@ -2815,100 +3217,73 @@ def QGeoGNN_transfer_column_info(data,data_8,data_25,MODEL):
         'graph_pooling': args.graph_pooling,
         'descriptor_dim': 1827
     }
-    dataset_25g = np.load('dataset_save/dataset_25g.npy', allow_pickle=True).tolist()
-    dataset_8g = np.load('dataset_save/dataset_8g.npy', allow_pickle=True).tolist()
-    dataset_4g = np.load('dataset_save/dataset_1013.npy', allow_pickle=True).tolist()
-    data_index_25g = np.arange(0, len(dataset_25g), 1)
-    data_index_8g = np.arange(0, len(dataset_8g), 1)
-    data_index_4g = np.arange(0, len(dataset_4g), 1)
-    dataset_graph_atom_bond_25g, dataset_graph_bond_angle_25g = Construct_dataset_25g(dataset_25g, data_index_25g, data_25['t1'], data_25['t2'],
-                                                                          data_25['speed'],
-                                                                          data_25['eluent'], data_25['e'], data_25['m'],
-                                                                          data_25['V_e'])
-    dataset_graph_atom_bond_8g, dataset_graph_bond_angle_8g = Construct_dataset_8g(dataset_8g, data_index_8g, data_8['t1'], data_8['t2'],
-                                                                          data_8['speed'],
-                                                                          data_8['eluent'], data_8['e'], data_8['m'],
-                                                                          data_8['V_e'])
-    dataset_graph_atom_bond_4g, dataset_graph_bond_angle_4g = Construct_dataset(dataset_4g, data_index_4g, data['t1'], data['t2'],
+    dataset = np.load('dataset_save/dataset_reversed.npy', allow_pickle=True).tolist()
+    data_index = np.arange(0, len(dataset), 1)
+    dataset_graph_atom_bond, dataset_graph_bond_angle = Construct_dataset_reversed(dataset, data_index, data['t1'], data['t2'],
                                                                           data['speed'],
                                                                           data['eluent'], data['e'], data['m'],
-                                                                          data['V_e'])
-    def split_data(dataset_graph_atom_bond,dataset_graph_bond_angle):
-        total_num = len(dataset_graph_atom_bond)
-        print(total_num)
+                                                                          data['V_e'], data['C_c']) #
+    total_num = len(dataset_graph_atom_bond)
+    print(total_num)
 
-        train_ratio = 0.8
-        validate_ratio = 0.1
-        test_ratio = 0.1
+    train_ratio = 0.9
+    validate_ratio = 0.05
+    test_ratio = 0.05
 
-        random.seed(525)
-        np.random.seed(1101)
-        if split_mode == 'data':
-            # automatic dataloading and splitting
-            data_array = np.arange(0, total_num, 1)
-            np.random.shuffle(data_array)
-            torch.random.manual_seed(525)
+    random.seed(525)
+    np.random.seed(1101)
+    if split_mode == 'data':
+        # automatic dataloading and splitting
+        data_array = np.arange(0, total_num, 1)
+        np.random.shuffle(data_array)
+        torch.random.manual_seed(525)
 
-            train_num = int(len(data_array) * train_ratio)
-            test_num = int(len(data_array) * test_ratio)
-            val_num = int(len(data_array) * validate_ratio)
+        train_num = int(len(data_array) * train_ratio)
+        test_num = int(len(data_array) * test_ratio)
+        val_num = int(len(data_array) * validate_ratio)
 
-            train_index = data_array[0:train_num]
-            valid_index = data_array[train_num:train_num + val_num]
-            if test_mode == 'fixed':
-                test_index = data_array[total_num - test_num:]
-            if test_mode == 'random':
-                test_index = data_array[train_num + val_num:train_num + val_num + test_num]
-        if split_mode == 'compound':
-            efficient_index = np.load('dataset_save/compound_index.npy')
-            compound_index = np.unique(efficient_index)
-            all_index = np.arange(0, len(efficient_index), 1)
-            state = np.random.get_state()
-            np.random.shuffle(compound_index)
-            train_num = int(train_ratio * compound_index.shape[0])
-            val_num = int(validate_ratio * compound_index.shape[0])
-            test_num = int(test_ratio * compound_index.shape[0])
-            compound_index = compound_index.tolist()
-            compound_train = compound_index[0:train_num]
-            compound_valid = compound_index[train_num:train_num + val_num]
-            compound_test = compound_index[train_num + val_num:train_num + val_num + test_num]
-            train_index = all_index[np.isin(efficient_index, compound_train)]
-            valid_index = all_index[np.isin(efficient_index, compound_valid)]
-            test_index = all_index[np.isin(efficient_index, compound_test)]
-            print(test_index.shape)
+        train_index = data_array[0:train_num]
+        valid_index = data_array[train_num:train_num + val_num]
+        if test_mode == 'fixed':
+            test_index = data_array[total_num - test_num:]
+        if test_mode == 'random':
+            test_index = data_array[train_num + val_num:train_num + val_num + test_num]
+    if split_mode == 'compound':
+        efficient_index = np.load('dataset_save/compound_index.npy')
+        compound_index = np.unique(efficient_index)
+        all_index = np.arange(0, len(efficient_index), 1)
+        state = np.random.get_state()
+        np.random.shuffle(compound_index)
+        train_num = int(train_ratio * compound_index.shape[0])
+        val_num = int(validate_ratio * compound_index.shape[0])
+        test_num = int(test_ratio * compound_index.shape[0])
+        compound_index = compound_index.tolist()
+        compound_train = compound_index[0:train_num]
+        compound_valid = compound_index[train_num:train_num + val_num]
+        compound_test = compound_index[train_num + val_num:train_num + val_num + test_num]
+        train_index = all_index[np.isin(efficient_index, compound_train)]
+        valid_index = all_index[np.isin(efficient_index, compound_valid)]
+        test_index = all_index[np.isin(efficient_index, compound_test)]
+        print(test_index.shape)
 
-        train_data_atom_bond = []
-        valid_data_atom_bond = []
-        test_data_atom_bond = []
-        train_data_bond_angle = []
-        valid_data_bond_angle = []
-        test_data_bond_angle = []
-        for i in test_index:
-            test_data_atom_bond.append(dataset_graph_atom_bond[i])
-            test_data_bond_angle.append(dataset_graph_bond_angle[i])
-        for i in valid_index:
-            valid_data_atom_bond.append(dataset_graph_atom_bond[i])
-            valid_data_bond_angle.append(dataset_graph_bond_angle[i])
-        for i in train_index:
-            train_data_atom_bond.append(dataset_graph_atom_bond[i])
-            train_data_bond_angle.append(dataset_graph_bond_angle[i])
+    train_data_atom_bond = []
+    valid_data_atom_bond = []
+    test_data_atom_bond = []
+    train_data_bond_angle = []
+    valid_data_bond_angle = []
+    test_data_bond_angle = []
+    for i in test_index:
+        test_data_atom_bond.append(dataset_graph_atom_bond[i])
+        test_data_bond_angle.append(dataset_graph_bond_angle[i])
+    for i in valid_index:
+        valid_data_atom_bond.append(dataset_graph_atom_bond[i])
+        valid_data_bond_angle.append(dataset_graph_bond_angle[i])
+    for i in train_index:
+        train_data_atom_bond.append(dataset_graph_atom_bond[i])
+        train_data_bond_angle.append(dataset_graph_bond_angle[i])
 
-        print(test_data_atom_bond[0].y, test_data_atom_bond[0].data_index)
+    print(test_data_atom_bond[0].y, test_data_atom_bond[0].data_index)
 
-
-        return train_data_atom_bond,valid_data_atom_bond, test_data_atom_bond,train_data_bond_angle,valid_data_bond_angle,test_data_bond_angle
-
-    train_data_atom_bond_4g, valid_data_atom_bond_4g, test_data_atom_bond_4g, train_data_bond_angle_4g, valid_data_bond_angle_4g, test_data_bond_angle_4g=split_data(dataset_graph_atom_bond_4g,dataset_graph_bond_angle_4g)
-    train_data_atom_bond_25g, valid_data_atom_bond_25g, test_data_atom_bond_25g, train_data_bond_angle_25g, valid_data_bond_angle_25g, test_data_bond_angle_25g = split_data(
-        dataset_graph_atom_bond_25g, dataset_graph_bond_angle_25g)
-    train_data_atom_bond_8g, valid_data_atom_bond_8g, test_data_atom_bond_8g, train_data_bond_angle_8g, valid_data_bond_angle_8g, test_data_bond_angle_8g = split_data(
-        dataset_graph_atom_bond_8g, dataset_graph_bond_angle_8g)
-    train_data_atom_bond=train_data_atom_bond_4g+train_data_atom_bond_8g+train_data_atom_bond_25g
-    valid_data_atom_bond=valid_data_atom_bond_4g+valid_data_atom_bond_8g+valid_data_atom_bond_25g
-    test_data_atom_bond = test_data_atom_bond_4g + test_data_atom_bond_8g + test_data_atom_bond_25g
-    train_data_bond_angle=train_data_bond_angle_4g+train_data_bond_angle_8g+train_data_bond_angle_25g
-    valid_data_bond_angle = valid_data_bond_angle_4g + valid_data_bond_angle_8g + valid_data_bond_angle_25g
-    test_data_bond_angle = test_data_bond_angle_4g +test_data_bond_angle_8g + test_data_bond_angle_25g
     train_loader_atom_bond = DataLoader(train_data_atom_bond, batch_size=args.batch_size, shuffle=False,
                                         num_workers=args.num_workers)
     valid_loader_atom_bond = DataLoader(valid_data_atom_bond, batch_size=args.batch_size, shuffle=False,
@@ -2921,53 +3296,70 @@ def QGeoGNN_transfer_column_info(data,data_8,data_25,MODEL):
                                          num_workers=args.num_workers)
     test_loader_bond_angle = DataLoader(test_data_bond_angle, batch_size=args.batch_size, shuffle=False,
                                         num_workers=args.num_workers)
+
     device = args.device
     criterion_fn = torch.nn.MSELoss()
     model = GINGraphPooling(**nn_params).to(device)
+    if transfer_mode=='transfer':
+        model.load_state_dict(
+            torch.load(f'saves/model_GeoGNN_4g/model_save_800.pth'))
+
     num_params = sum(p.numel() for p in model.parameters())
 
-    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=0.00001, weight_decay=args.weight_decay)
     writer = SummaryWriter(log_dir=args.save_dir)
     scheduler = StepLR(optimizer, step_size=50, gamma=0.5)
     print('===========Data Prepared================')
 
     if MODEL == 'Train':
+        if transfer_mode=='direct_train':
+            try:
+                os.makedirs(f'saves/model_GeoGNN_direct_train_reversed')
+            except OSError:
+                pass
+        elif transfer_mode=='transfer':
+            try:
+                os.makedirs(f'saves/model_GeoGNN_transfer_reversed')
+            except OSError:
+                pass
 
-        try:
-            os.makedirs(f'saves/model_GeoGNN_column_info')
-        except OSError:
-            pass
-
-        for epoch in tqdm(range(2000)):
+        for epoch in tqdm(range(500)):
 
             train_mae = train(model, device, train_loader_atom_bond, train_loader_bond_angle, optimizer, criterion_fn)
 
-            if (epoch + 1) % 50 == 0:
+            if (epoch + 1) % 20 == 0:
                 valid_mae_1, valid_mae_2 = eval(model, device, valid_loader_atom_bond, valid_loader_bond_angle)
                 y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model,
                                                                                                               device,
                                                                                                               test_loader_atom_bond,
                                                                                                               test_loader_bond_angle)
+                if transfer_mode=='transfer':
+                    with open(f"saves/model_GeoGNN_transfer_reversed/GeoGNN.log", "a+") as f:
+                        f.write(
+                            f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
+                            f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
+
+                if transfer_mode=='direct_train':
+                    with open(f"saves/model_GeoGNN_direct_train_reversed/GeoGNN.log", "a+") as f:
+                        f.write(
+                            f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
+                            f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
                 print(train_mae, valid_mae_1, valid_mae_2, R_square_1, test_mae_1, R_square_2, test_mae_2)
-                with open(f"saves/model_GeoGNN_column_info/GeoGNN.log", "a+") as f:
-                    f.write(
-                        f'epoch: {epoch + 1}, MSE_train: {train_mae}, valid_t1:{valid_mae_1},  valid_t2:{valid_mae_2},'
-                        f'  R_2_t1_test:{R_square_1.item()}, R_2_t2_test:{R_square_2.item()}\n')
-
-
-                torch.save(model.state_dict(), f'saves/model_GeoGNN_column_info/model_save_{epoch + 1}.pth')
-
+                if transfer_mode=='transfer':
+                    torch.save(model.state_dict(), f'saves/model_GeoGNN_transfer_reversed/model_save_{epoch + 1}.pth')
+                if transfer_mode == 'direct_train':
+                    torch.save(model.state_dict(), f'saves/model_GeoGNN_direct_train_reversed/model_save_{epoch + 1}.pth')
 
     if MODEL == 'Test':
         if transfer_mode == 'direct_train':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_direct_train_25g/model_save_1000.pth'))
+                torch.load(f'saves/model_GeoGNN_direct_train_reversed/model_save_140.pth'))
         if transfer_mode == 'transfer':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_transfer_25g/model_save_90.pth'))
+                torch.load(f'saves/model_GeoGNN_transfer_reversed/model_save_40.pth'))
         if transfer_mode == 'no_transfer':
             model.load_state_dict(
-                torch.load(f'saves/model_GeoGNN_1031/model_save_400.pth'))
+                torch.load(f'saves/model_GeoGNN_total/model_save_400.pth'))
         y_true_1, y_pred_1, y_true_2, y_pred_2, R_square_1, test_mae_1, R_square_2, test_mae_2 = test(model, device,
                                                                                                       test_loader_atom_bond,
                                                                                                       test_loader_bond_angle)
@@ -2977,41 +3369,41 @@ def QGeoGNN_transfer_column_info(data,data_8,data_25,MODEL):
         y_pred_t2 = y_pred_2.cpu().data.numpy()
         y_true_t2 = y_true_2.cpu().data.numpy()
         if transfer_mode == 'direct_train':
-            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_direct_train_25g', c='#CD5C5C')
-            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_direct_train_25g', c='#6495ED')
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_direct_train_reversed', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_direct_train_reversed', c='#6495ED')
             df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
                                'true_t2': y_true_t2.reshape(-1, ),
                                'pred_t1': y_pred_t1.reshape(-1, ),
                                'pred_t2': y_pred_t2.reshape(-1, )})
-            df.to_csv(f'result_save/GeoGNN_direct_train_25g.csv')
-            with open(f"result_save/GeoGNN_direct_train_25g.log", "w") as f:
+            df.to_csv(f'result_save/GeoGNN_direct_train_reversed.csv')
+            with open(f"result_save/GeoGNN_direct_train_reversed.log", "w") as f:
                 f.write(
                     f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
                 f.write(
                     f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
 
         if transfer_mode == 'transfer':
-            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_transfer_25g', c='#CD5C5C')
-            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_transfer_25g', c='#6495ED')
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_transfer_reversed', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_transfer_reversed', c='#6495ED')
             df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
                                'true_t2': y_true_t2.reshape(-1, ),
                                'pred_t1': y_pred_t1.reshape(-1, ),
                                'pred_t2': y_pred_t2.reshape(-1, )})
-            df.to_csv(f'result_save/GeoGNN_transfer_25g.csv')
-            with open(f"result_save/GeoGNN_transfer_25g.log", "w") as f:
+            df.to_csv(f'result_save/GeoGNN_transfer_reversed.csv')
+            with open(f"result_save/GeoGNN_transfer_reversed.log", "w") as f:
                 f.write(
                     f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
                 f.write(
                     f'MSE_t2: {measure_t2[0]}, RMSE_t2:{measure_t2[1]},  MAE_t2:{measure_t2[2]},   R_2_t2:{measure_t2[3]}')
         if transfer_mode == 'no_transfer':
-            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_no_transfer_25g', c='#CD5C5C')
-            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_no_transfer_25g', c='#6495ED')
+            measure_t1, plot_t1 = measurement(y_true_t1, y_pred_t1, f't1_GeoGNN_no_transfer_reversed', c='#CD5C5C')
+            measure_t2, plot_t2 = measurement(y_true_t2, y_pred_t2, f't2_GeoGNN_no_transfer_reversed', c='#6495ED')
             df = pd.DataFrame({'true_t1': y_true_t1.reshape(-1, ),
                                'true_t2': y_true_t2.reshape(-1, ),
                                'pred_t1': y_pred_t1.reshape(-1, ),
                                'pred_t2': y_pred_t2.reshape(-1, )})
-            df.to_csv(f'result_save/GeoGNN_no_transfer_25g.csv')
-            with open(f"result_save/GeoGNN_no_transfer_25g.log", "w") as f:
+            df.to_csv(f'result_save/GeoGNN_no_transfer_reversed.csv')
+            with open(f"result_save/GeoGNN_no_transfer_reversed.log", "w") as f:
                 f.write(
                     f'MSE_t1: {measure_t1[0]}, RMSE_t1:{measure_t1[1]},  MAE_t1:{measure_t1[2]},   R_2_t1:{measure_t1[3]}\n')
                 f.write(
@@ -3035,7 +3427,7 @@ def QGeoGNN_different_data_num(data,MODEL):
         'graph_pooling': args.graph_pooling,
         'descriptor_dim': 1827
     }
-    dataset = np.load('dataset_save/dataset_1124.npy', allow_pickle=True).tolist()
+    dataset = np.load('dataset_save/dataset_4g.npy', allow_pickle=True).tolist()
     data_index=np.arange(0,len(dataset),1)
     dataset_graph_atom_bond, dataset_graph_bond_angle= Construct_dataset(dataset,data_index,data['t1'],data['t2'],data['speed'],
                                                                          data['eluent'],data['e'],data['m'],data['V_e'])
@@ -3171,6 +3563,8 @@ def QGeoGNN_different_data_num(data,MODEL):
                                'pred_t2': y_pred_t2.reshape(-1, )})
             df.to_csv(f'result_save/different_num/GeoGNN_different_num_{train_ratio}.csv')
 
+
+
 def QGeoGNN_different_noise_level(data,MODEL):
     # bad_mol = save_3D_mol(data['smiles'], '3D_mol')
     # np.save('3D_mol/bad_mol.npy', np.array(bad_mol))
@@ -3189,7 +3583,7 @@ def QGeoGNN_different_noise_level(data,MODEL):
             'graph_pooling': args.graph_pooling,
             'descriptor_dim': 1827
         }
-        dataset = np.load('dataset_save/dataset_1124.npy', allow_pickle=True).tolist()
+        dataset = np.load('dataset_save/dataset_4g.npy', allow_pickle=True).tolist()
         data_index = np.arange(0, len(dataset), 1)
         dataset_graph_atom_bond, dataset_graph_bond_angle = Construct_dataset(dataset, data_index, data['t1'],
                                                                               data['t2'], data['speed'],
@@ -3327,7 +3721,61 @@ def QGeoGNN_different_noise_level(data,MODEL):
                                'pred_t2': y_pred_t2.reshape(-1, )})
             df.to_csv(f'result_save/different_noise/GeoGNN_different_noise_{noise_level}.csv')
 
-def predict_separate(input,eluent,e,m,V_e,use_input='smile'):
+def calculate_separation_probability(*args):
+    """General separation probability calculation function"""
+    compound_count = len(args) // 2  # Each compound has two parameters: V1 and V2
+    total_prob = 1.0
+    
+    # Calculate all compound pairs
+    for i in range(compound_count):
+        for j in range(i+1, compound_count):
+            V1_i = args[i*2]
+            V2_i = args[i*2+1]
+            V1_j = args[j*2]
+            V2_j = args[j*2+1]
+            pair_prob = calculate_pair_probability(V1_i, V2_i, V1_j, V2_j)
+            total_prob *= pair_prob
+            
+    return total_prob
+
+def calculate_pair_probability(V1_self, V2_self, V1_other, V2_other):
+    """Separation probability calculation based on elution window overlap (revised version)"""
+    # Define elution window: V1_10% to V2_90%
+    self_window = (V1_self[0], V2_self[2])  # (V1_10%, V2_90%)
+    other_window = (V1_other[0], V2_other[2])
+    
+    # Determine elution order (based on V1_50% median value)
+    if V1_self[1] <= V1_other[1]:
+        first, second = self_window, other_window
+    else:
+        first, second = other_window, self_window
+    
+    # Calculate separation gap
+    gap = second[0] - first[1]
+    
+    # Complete separation case
+    if gap > 0:
+        return 1.0
+    
+    # Calculate overlap region
+    overlap_start = max(first[0], second[0])
+    overlap_end = min(first[1], second[1])
+    overlap = max(0, overlap_end - overlap_start)
+    
+    # Calculate total span (sum of both window lengths)
+    total_span = (first[1]-first[0]) + (second[1]-second[0])
+    
+    # Handle division by zero
+    if total_span <= 0:
+        return 0.0
+    
+    # Calculate separation degree
+    separation = 1 - (overlap / total_span)
+    
+    # Sigmoid function parameter adjustment (steeper transition)
+    return 1 / (1 + np.exp(-15*(separation - 0.7)))
+
+def predict_separate(input, eluent, e, m, V_e, use_input='smile'):
     dataset = []
     dataset_mord = []
     dataset_attribute = []
@@ -3369,7 +3817,7 @@ def predict_separate(input,eluent,e,m,V_e,use_input='smile'):
     X_min_eluent=np.load('dataset_save/X_min_eluent.npy')
     X_max_descriptor=np.load('dataset_save/X_max_descriptor.npy')
     X_min_descriptor=np.load('dataset_save/X_min_descriptor.npy')
-    all_descriptor = (all_descriptor -X_min_descriptor) / (
+    all_descriptor = (all_descriptor - X_min_descriptor) / (
                 X_max_descriptor - X_min_descriptor + 1e-8)
     eluent = (eluent - X_min_eluent) / ( X_max_eluent - X_min_eluent + 1e-8)
     all_descriptor = torch.from_numpy(np.array(all_descriptor)).to(torch.int64)
@@ -3435,8 +3883,11 @@ def predict_separate(input,eluent,e,m,V_e,use_input='smile'):
     criterion_fn = torch.nn.MSELoss()
     model = GINGraphPooling(**nn_params).to(device)
     num_params = sum(p.numel() for p in model.parameters())
-    model.load_state_dict(
-        torch.load(f'saves/model_GeoGNN_1124/model_save_300.pth'))
+    model.load_state_dict(torch.load(f'saves/model_GeoGNN_1124/model_save_300.pth')) #4g Model
+    # model.load_state_dict(torch.load(f'saves/model_GeoGNN_transfer_8g/model_save_140.pth')) #8g Model
+    # model.load_state_dict(torch.load(f'saves/model_GeoGNN_transfer_25g/model_save_240.pth')) #25g Model
+    # model.load_state_dict(torch.load(f'saves/model_GeoGNN_transfer_40g/model_save_480.pth')) #40g Model
+    
     model.eval()
     y_true_1 = []
     y_pred_1 = []
@@ -3463,15 +3914,24 @@ def predict_separate(input,eluent,e,m,V_e,use_input='smile'):
             y_pred_10_2.append(pred[:, 3].detach().cpu())
             y_pred_90_2.append(pred[:, 5].detach().cpu())
 
-    y_pred_1 = torch.cat(y_pred_1, dim=0)
-    y_pred_10_1 = torch.cat(y_pred_10_1, dim=0)
-    y_pred_90_1 = torch.cat(y_pred_90_1, dim=0)
+    y_pred_1 = torch.cat(y_pred_1, dim=0).cpu().data.numpy()
+    y_pred_10_1 = torch.cat(y_pred_10_1, dim=0).cpu().data.numpy()
+    y_pred_90_1 = torch.cat(y_pred_90_1, dim=0).cpu().data.numpy()
 
-    y_pred_2 = torch.cat(y_pred_2, dim=0)
-    y_pred_10_2 = torch.cat(y_pred_10_2, dim=0)
-    y_pred_90_2 = torch.cat(y_pred_90_2, dim=0)
-    print(y_pred_10_1,y_pred_1,y_pred_90_1)
-    print(y_pred_10_2,y_pred_2,y_pred_90_2)
+    y_pred_2 = torch.cat(y_pred_2, dim=0).cpu().data.numpy()
+    y_pred_10_2 = torch.cat(y_pred_10_2, dim=0).cpu().data.numpy()
+    y_pred_90_2 = torch.cat(y_pred_90_2, dim=0).cpu().data.numpy()
+
+    # print(y_pred_10_1,y_pred_1,y_pred_90_1)
+    # print(y_pred_10_2,y_pred_2,y_pred_90_2)
+
+    return_values = []
+    for i in range(len(y_pred_1)):
+        return_values.extend([
+            [y_pred_10_1[i], y_pred_1[i], y_pred_90_1[i]],
+            [y_pred_10_2[i], y_pred_2[i], y_pred_90_2[i]]
+        ])
+    return return_values
 
 
 

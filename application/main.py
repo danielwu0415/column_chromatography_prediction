@@ -2,7 +2,7 @@ import scipy
 from sklearn import linear_model
 from matplotlib.ticker import MultipleLocator, FormatStrFormatter
 import argparse
-import os
+import  os
 import pymysql
 import pandas as pd
 from rdkit import Chem
@@ -28,6 +28,7 @@ import torch.nn as nn
 import lightgbm as lgb
 from sklearn.ensemble import RandomForestRegressor
 import time
+import seaborn as sns
 import matplotlib.pyplot as plt
 import warnings
 import heapq
@@ -38,10 +39,11 @@ from collections import deque
 import numpy as np
 import random
 from utils import *
+from QGeoGNN import QGeoGNN_transfer_reversed, calculate_separation_probability, predict_separate
 random.seed(525)
 np.random.seed(1101)
 torch.manual_seed(324)
-batch_size=2048
+batch_size=64
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--file_path', type=str, default=os.getcwd()+'\TLC_dataset.xlsx', help='path of download dataset')
@@ -140,10 +142,10 @@ class Dataset_process():
             charset='utf8',
         )
 
-        # sql语句
+        # SQL query
         sqlcmd = "select * from tb_TLC"
 
-        # 利用pandas 模块导入mysql数据
+        # Load MySQL data using pandas module
         a = pd.read_sql(sqlcmd, dbconn)
 
         a.to_excel(self.file_path)
@@ -181,7 +183,7 @@ class Dataset_process():
         compound_smile = compound_info[:, 3]
 
 
-        # 转变为mol并变成167维向量
+        # Convert to molecule object and generate 167-dimensional vector
         compound_mol = compound_smile.copy()
 
         use_index = 0
@@ -271,7 +273,7 @@ class Dataset_process():
         # np.random.seed(self.seed)
         # np.random.shuffle(data_array)
 
-        #----------------单个画图-----------------
+        #----------------single plotting-----------------
         # index = target_ID
         # ID_loc = np.where(compound_ID == index)[0][0]
         # smile=compound_smile[ID_loc]
@@ -285,7 +287,7 @@ class Dataset_process():
         # plt.show()
 
 
-        #------------总体画图-----------------
+        #------------Overall plotting-----------------
         if target_ID==-1:
             plt.figure(10,figsize=(7,10),dpi=300)
             num=0
@@ -335,7 +337,7 @@ class Dataset_process():
                 Eluent_EA[i] = a
                 compound_eluent[i] = a / (a + b)
 
-        # 转变为mol并变成167维向量
+        # Convert to mol and generate 167-dimensional vector
         compound_mol = compound_smile.copy()
         compound_finger = np.zeros([len(compound_smile), 167])
         compound_MolWt = np.zeros([len(compound_smile), 1])
@@ -476,7 +478,7 @@ class Dataset_process():
                 Eluent_EA[i] = a
                 compound_eluent[i] = a / (a + b)
 
-        # 转变为mol并变成167维向量
+        # Convert to mol and generate 167-dimensional vector
         compound_mol = compound_smile.copy()
         compound_finger = np.zeros([len(compound_smile), 167])
         compound_MolWt = np.zeros([len(compound_smile), 1])
@@ -509,9 +511,9 @@ class Dataset_process():
             compound_HBD[use_index] = Descriptors.NumHDonors(compound_mol[i])  # Number of H bond donors
             compound_HBA[use_index] = Descriptors.NumHAcceptors(compound_mol[i])  # Number of H bond acceptors
             compound_LogP[use_index] = Descriptors.MolLogP(compound_mol[i])  # LogP
-            compound_ID_new[use_index] = compound_ID[i]
-            compound_Rf_new[use_index] = compound_Rf[i]
-            compound_eluent_new[use_index] = compound_eluent[i]
+            compound_ID_new[use_index]=compound_ID[i]
+            compound_Rf_new[use_index]=compound_Rf[i]
+            compound_eluent_new[use_index]=compound_eluent[i]
             use_index += 1
 
         compound_ID = compound_ID_new[0:use_index]
@@ -524,7 +526,7 @@ class Dataset_process():
         compound_HBD = compound_HBD[0:use_index]
         compound_HBA = compound_HBA[0:use_index]
         compound_LogP = compound_LogP[0:use_index]
-        # 读取偶极矩文件
+        # Read dipole moment file
         if self.add_dipole == True:
             dipole_info = (pd.read_excel(self.dipole_path, index_col=None, na_values=['NA']).fillna(-1)).values
             dipole_ID = dipole_info[:, 0]
@@ -594,7 +596,7 @@ class ANN_CC(nn.Module):
 def split_dataset(data):
     if 'X_CC.npy' not in os.listdir('dataset_save'):
         all_eluent_ratio = []
-        all_descriptor=np.load('dataset_save/all_descriptor_CC.npy')
+        all_descriptor=np.load('dataset_save/all_descriptor_CC_8.npy')
         dataset = []
         y=[]
         for i in tqdm(range(len(data['smiles']))):
@@ -905,12 +907,20 @@ def calculate_similarity(Data_CC):
 
 
 
+
 config=parse_args()
 config.test_mode='split_by_data'
 
-#Data_CC=read_data_CC()
+
+### Switch between different datasets ###
+# Data_CC=read_data_CC()
 #save_compound_index(Data_CC)
 Data_CC=read_data_CC_compound()
+# Data_CC_8=read_data_CC_8()
+# Data_CC_25=read_data_CC_25()
+# Data_CC_40=read_data_CC_40()
+# Data_CC_C18=read_data_CC_C18()
+# Data_CC_reversed=read_data_CC_reversed()
 #calculate_similarity(Data_CC)
 #calcu_mord_CC()
 if config.test_mode=='split_by_data':
@@ -924,7 +934,7 @@ dir_name = 'model_save/'+model_name
 optimizer_CC = torch.optim.Adam([{'params': Net_CC.parameters(), 'lr': config.NN_lr}])
 
 
-
+### Switch between different modes ###
 mode='predict_mix'
 n_epochs=10000
 
@@ -968,6 +978,7 @@ if mode=='Train_NN':
                 for p in optimizer_CC.param_groups:
                     p['lr'] *= 0.9
                 print('adjust lr:', optimizer_CC.state_dict()['param_groups'][0]['lr'])
+
 if mode=='Test_NN':
     X_train_CC = Variable(torch.from_numpy(X_train_CC.astype(np.float32)).to(config.device), requires_grad=True)
     y_train_CC = Variable(torch.from_numpy(y_train_CC.astype(np.float32)).to(config.device))
@@ -1031,13 +1042,16 @@ if mode == 'Train_LGB':
     Model.use_model = 'LGB'
     model = Model.train(X_train_CC, y_train_CC, X_valid_CC, y_valid_CC)
     Model.test(X_test_CC, y_test_CC, model)
-if mode=='QGeoGNN':
-    # smile = pd.DataFrame({'smile': data['smiles']})
-    # print(len(smile.value_counts().index.tolist()))
+if mode=='QGeoGNN': ## Invoke different modules to train corresponding models
     QGeoGNN(Data_CC, MODEL='Train')
+    # QGeoGNN_transfer_8g(Data_CC_8, MODEL='Test')
+    # QGeoGNN_transfer_25g(Data_CC_25, MODEL='Train')
+    # QGeoGNN_transfer_40g(Data_CC_40, MODEL='Train')
+    # QGeoGNN_transfer_C18(Data_CC_C18, MODEL='Test')
+    # QGeoGNN_transfer_reversed(Data_CC_reversed, MODEL='Test')
     #QGeoGNN_different_data_num(Data_CC, MODEL='Train')
-    #QGeoGNN_different_noise_level( Data_CC, MODEL='Train')
-    #QGeoGNN_cycle(Data_CC, MODEL='Train')
+    #QGeoGNN_different_noise_level( Data_CC, MODEL='Test')
+    #QGeoGNN_cycle(Data_CC, MODEL='Train')-
 if mode=='Analysis_similarity':
     def save_sim():
         QGeoGNN_cycle(Data_CC, MODEL='Test')
@@ -1109,7 +1123,219 @@ if mode=='Analysis_similarity':
     #plt.show()
 
 if mode=='predict_mix':
-    predict_separate(['C=CCOC1=CC=CC=C1','C=CCC1=CC=CC=C1O'],'5/1','DCM',108,300)
+    all_eluent=['0/1','1/1','2/1','5/1','10/1','20/1','50/1','1/0']
+    all_prob=[]
+    result_data = [] 
+    
+    # Can input any number of SMILES
+    compound_smiles = [
+        'CC(=O)C1=CC=CC=C1',
+        'CCC1=CC=CC=C1'
+    ]
+    
+    # Automatically generate color configuration (supports up to 10 compounds)
+    colors = plt.cm.tab10.colors
+    compound_colors = {
+        i: colors[i % 10] for i in range(len(compound_smiles))
+    }
 
 
+    for eluent in tqdm(all_eluent):
+        # Dynamically get prediction results
+        pred_results = predict_separate(compound_smiles, eluent, 'PE', 100, 300)
+        
+        # Calculate the separation probability of the current eluent
+        current_prob = calculate_separation_probability(*pred_results)
+        all_prob.append(current_prob)
+        
+        # Build result entry
+        result_entry = {
+            'Eluent_Ratio': eluent,
+            'Separation_Probability': current_prob
+        }
+        
+        # Dynamically process compound data
+        for idx in range(len(compound_smiles)):
+            # v1 = pred_results[idx*2]
+            # v2 = pred_results[idx*2+1]
+            v1 = [x/10 for x in pred_results[idx*2]]
+            v2 = [x/10 for x in pred_results[idx*2+1]]
+            result_entry.update({
+                f'Compound{idx+1}_V1_10%': v1[0],
+                f'Compound{idx+1}_V1_50%': v1[1],
+                f'Compound{idx+1}_V1_90%': v1[2],
+                f'Compound{idx+1}_V2_10%': v2[0],
+                f'Compound{idx+1}_V2_50%': v2[1],
+                f'Compound{idx+1}_V2_90%': v2[2]
+            })
+        
+        result_data.append(result_entry)
 
+    df = pd.DataFrame(result_data)
+    df.to_csv('separation_probability_results.csv', index=False)
+
+    # ==== Dynamic Visualization ====
+    plt.style.use('ggplot')
+    plt.figure(figsize=(14, 6 + 2*len(compound_smiles)), dpi=300)
+    
+    # Redefine axes (increase top and bottom margins)
+    y_interval_height = 4.0  # Increase total height
+    y_padding = 0.8  # New parameter for top and bottom margins
+    y_positions = {ratio: idx*y_interval_height for idx, ratio in enumerate(df['Eluent_Ratio'])}
+    
+    # Layout parameters
+    h_spacing = 0.5
+    compound_height = 0.3  # Height of single compound interval
+    
+    # Generate color configuration (adapted to ggplot theme)
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    compound_colors = {i: colors[i % len(colors)] for i in range(len(compound_smiles))}
+    
+    for idx, row in df.iterrows():
+        y_base = y_positions[row['Eluent_Ratio']]
+        
+        # Calculate compound positions (preserve margins)
+        compound_y_positions = np.linspace(
+            start=y_base + y_padding,
+            stop=y_base + y_interval_height - y_padding,
+            num=len(compound_smiles),
+            endpoint=True
+        )
+        
+        # Adjust background region height (preserve margins)
+        plt.fill_betweenx(
+            y=[y_base + y_padding/2, y_base + y_interval_height - y_padding/2],
+            x1=0,
+            x2=max(df[[f'Compound{i+1}_V2_90%' for i in range(len(compound_smiles))]].max()),
+            color='lightgray',
+            alpha=0.15
+        )
+        
+        # Draw intervals for each compound
+        for compound_idx in range(len(compound_smiles)):
+            y_center = compound_y_positions[compound_idx]
+            y_range = [y_center + compound_height, y_center - compound_height]
+            
+            # V1 interval
+            plt.fill_betweenx(
+                y=y_range,
+                x1=row[f'Compound{compound_idx+1}_V1_10%'] - h_spacing,
+                x2=row[f'Compound{compound_idx+1}_V1_90%'] - h_spacing,
+                color=compound_colors[compound_idx],
+                alpha=0.4,
+                edgecolor='k',
+                linewidth=0.8
+            )
+            # V1 median line
+            plt.plot(
+                [row[f'Compound{compound_idx+1}_V1_50%'] - h_spacing]*2,
+                y_range,
+                color=compound_colors[compound_idx],
+                linestyle='--',
+                lw=1.5
+            )
+            
+            # V2 interval
+            plt.fill_betweenx(
+                y=y_range,
+                x1=row[f'Compound{compound_idx+1}_V2_10%'] + h_spacing,
+                x2=row[f'Compound{compound_idx+1}_V2_90%'] + h_spacing,
+                color=compound_colors[compound_idx],
+                alpha=0.6,
+                edgecolor='k',
+                linewidth=0.8
+            )
+            # V2 median line
+            plt.plot(
+                [row[f'Compound{compound_idx+1}_V2_50%'] + h_spacing]*2,
+                y_range,
+                color=compound_colors[compound_idx],
+                linestyle='--',
+                lw=1.5
+            )
+    
+
+    # Configure axes
+    plt.yticks(
+        ticks=[pos + y_interval_height/2 for pos in y_positions.values()],  # Center labels
+        labels=[f'{ratio}' for ratio in y_positions.keys()],
+        fontsize=10
+    )
+    plt.gca().invert_yaxis()
+    
+    # Add horizontal reference lines
+    for y in y_positions.values():
+        plt.axhline(y=y+y_interval_height, color='gray', linestyle=':', alpha=0.4, linewidth=0.8)
+    
+    # Configure axes
+    plt.xlabel('Retention Volume (V/mL)')
+    plt.ylabel('Eluent Ratio (PE/EA)')
+    plt.title(f'Retention Volume Distribution by Eluent Ratio ({len(compound_smiles)} Compounds)')
+
+    # Dynamic legend
+    legend_elements = []
+    for i in range(len(compound_smiles)):
+        # Add V1 interval legend
+        legend_elements.append(
+            plt.Rectangle((0,0),1,1, 
+                         fc=compound_colors[i], 
+                         alpha=0.4, 
+                         label=f'Compound{i+1} $V_1$')
+        )
+        # Add V1 median line legend
+        legend_elements.append(
+            plt.Line2D([0],[0], 
+                      color=compound_colors[i], 
+                      lw=1.5, 
+                      linestyle='--',
+                      label=f'Compound{i+1} $V_{{50\%}}$')
+        )
+        # Add V2 interval legend
+        legend_elements.append(
+            plt.Rectangle((0,0),1,1, 
+                         fc=compound_colors[i], 
+                         alpha=0.6, 
+                         label=f'Compound{i+1} $V_2$')
+        )
+
+    plt.legend(
+        handles=legend_elements,
+        bbox_to_anchor=(0.85, 1),
+        loc='upper left',
+        ncol=1,
+        fontsize=9,
+        framealpha=0.9
+    )
+
+    # Add Sp label (adjust vertical alignment)
+    max_x = plt.gca().get_xlim()[1]
+    for ratio, base_y in y_positions.items():
+        sp = df[df['Eluent_Ratio'] == ratio]['Separation_Probability'].values[0]
+        # Calculate the vertical center position of the label (aligned with the eluent ratio label)
+        label_y = base_y + y_interval_height/2  # Use interval height to calculate midpoint
+        
+        plt.text(
+            x=max_x * 1.02,
+            y=label_y,  # Use adjusted center position
+            s=f'$S_p$: {sp:.2f}',
+            va='center',
+            ha='left',
+            fontsize=10,
+            color='black',
+            fontweight='bold',
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=2)
+        )
+
+    plt.grid(True, alpha=0.3, linestyle='--')
+
+    # Save plot
+    plt.tight_layout()
+    plt.savefig('retention_profile.png', bbox_inches='tight')
+    plt.show()
+    # ==== End of Visualization ====
+    
+    all_prob=np.array(all_prob)
+    print(all_prob)
+    print(f'the best eluent is {all_eluent[np.argmax(all_prob)]}, the best Sp is {all_prob[np.argmax(all_prob)]}')
+
+    
